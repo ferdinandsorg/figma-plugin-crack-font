@@ -8,14 +8,6 @@
 // // Send data to plugin UI
 // figma.ui.postMessage({"selection": selection });
 
-
-
-
-
-
-
-
-
 // // Calls to "parent.postMessage" from within the HTML page will trigger this
 // // callback. The callback will be passed the "pluginMessage" property of the
 // // posted message.
@@ -46,7 +38,7 @@
 async function main(): Promise<string | undefined> {
   // Roboto Regular is the font that objects will be created with by default in
   // Figma. We need to wait for fonts to load before creating text using them.
-  await figma.loadFontAsync({ family: "Roboto", style: "Regular" })
+  await figma.loadFontAsync({ family: "Inter", style: "Regular" })
 
   // get selection
   const node = figma.currentPage.selection[0]
@@ -75,31 +67,47 @@ async function main(): Promise<string | undefined> {
   const nodes = []
   let width = 0
   for (let i = 0; i < text.length; i++) {
-
-    // load font from selection  
-    await figma.loadFontAsync(node.getRangeFontName(i, i + 1) as FontName)
-
-    const letterNode = figma.createText()
-    letterNode.fontSize = node.fontSize
-    letterNode.fontName = node.fontName
-
-    letterNode.characters = text.charAt(i)
-    width += letterNode.width
+    try {
+      // load font from selection  
+      await figma.loadFontAsync(node.getRangeFontName(i, i + 1) as FontName);
+    } catch (error) {
+      console.error(error);
+    }
+  
+    const letterNode = figma.createText();
+    // letterNode.fontSize = node.fontSize;
+    try {
+      letterNode.fontSize = node.fontSize;
+    } catch (error) {
+      console.error(error);
+    }
+    try {
+      letterNode.fontName = node.fontName;
+    } catch (error) {
+      console.error(error);
+    }
+  
+    letterNode.characters = text.charAt(i);
+    width += letterNode.width;
     
     // check if its a space character and change the width
     if (letterNode.width == 0) {
-      letterNode.resize(space, letterNode.height)
+      letterNode.resize(space, letterNode.height);
     }
-
+  
     // add gap between letters
     if (i !== 0) {
-      width += gap
+      width += gap;
     }
-
+  
     // push letters in nodes
-    node.parent.appendChild(letterNode)
-    nodes.push(letterNode)
+    if (node.parent) {
+      (node.parent as BaseNode & ChildrenMixin).appendChild(letterNode);
+      nodes.push(letterNode);
+    }
   }
+  
+  
 
   // Walk through each letter and position it on a circle of radius r.
   nodes.forEach(function (letterNode) {
@@ -118,13 +126,15 @@ async function main(): Promise<string | undefined> {
   })
 
   // Put all nodes in a group
-  const nodesGroup: GroupNode = figma.group(nodes, node.parent)
-      nodesGroup.name = node.characters
-      // Select and focus the group
-      figma.currentPage.selection = [nodesGroup]
-      figma.viewport.scrollAndZoomIntoView([nodesGroup])
+  if (node.parent) {
+    const nodesGroup: GroupNode = figma.group(nodes, node.parent as BaseNode & ChildrenMixin);
+    nodesGroup.name = node.characters;
+    // Select and focus the group
+    figma.currentPage.selection = [nodesGroup];
+    figma.viewport.scrollAndZoomIntoView([nodesGroup]);
+  }
   // delete original selection
-  node.remove()
+  node.remove();
 }
 
 main().then((message: string | undefined) => {

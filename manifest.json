@@ -1,7 +1,10 @@
 {
-  "name": "crack-font",
-  "id": "929414938810147814",
-  "api": "1.0.0",
-  "main": "code.js",
-  "ui": "ui.html"
+    "name": "crack-font",
+    "id": "929414938810147814",
+    "api": "1.0.0",
+    "main": "code.js",
+    "ui": "ui.html",
+    "editorType": [
+        "figma"
+    ]
 }

@@ -1,29 +1,27 @@
-<h2>Crack Font Plugin</h2>
+<!-- <h2>Crack Font Plugin</h2>
 <p>Text is: <input id="text" value="5"></p>
 
 <p>It has: <span id="countOfCharacters"></span> Characters</p>
 <button id="triggerCrack">Make it crack</button>
 
 <script>
+    // Get event from code.ts
+    onmessage = (event) => {
+        const text = event.data.pluginMessage.selection;
+        const countCharacters = event.data.pluginMessage.selection.length;
 
-  // Get event from code.ts
-  onmessage = (event) => {
-    const text = event.data.pluginMessage.selection;
-    const countCharacters = event.data.pluginMessage.selection.length;
+        document.getElementById("text").value = text;
+        document.getElementById("countOfCharacters").innerHTML = countCharacters;
+    }
 
-    document.getElementById("text").value = text;
-    document.getElementById("countOfCharacters").innerHTML = countCharacters;
-  }
+    // Action by Clicking Button #triggerCrack
+    document.getElementById('triggerCrack').onclick = () => {
+        const textbox = document.getElementById('text').value;
+        console.log(textbox);
+        // parent.postMessage({ pluginMessage: { type: 'create-rectangles', count } }, '*')
+    }
 
-  // Action by Clicking Button #triggerCrack
-  document.getElementById('triggerCrack').onclick = () => {
-    const textbox = document.getElementById('text').value;
-    console.log(textbox);
-    // parent.postMessage({ pluginMessage: { type: 'create-rectangles', count } }, '*')
-  }
-
-// document.getElementById('cancel').onclick = () => {
-//   parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
-// }
-
-</script>
+    // document.getElementById('cancel').onclick = () => {
+    //   parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
+    // }
+</script> -->

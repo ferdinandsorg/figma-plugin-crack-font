@@ -1,3 +1,4 @@
+"use strict";
 // // This shows the HTML page in "ui.html".
 // figma.showUI(__html__);
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
@@ -41,7 +42,7 @@ function main() {
     return __awaiter(this, void 0, void 0, function* () {
         // Roboto Regular is the font that objects will be created with by default in
         // Figma. We need to wait for fonts to load before creating text using them.
-        yield figma.loadFontAsync({ family: "Roboto", style: "Regular" });
+        yield figma.loadFontAsync({ family: "Inter", style: "Regular" });
         // get selection
         const node = figma.currentPage.selection[0];
         // Make sure the selection is a single piece of text before proceeding.
@@ -64,11 +65,27 @@ function main() {
         const nodes = [];
         let width = 0;
         for (let i = 0; i < text.length; i++) {
-            // load font from selection  
-            yield figma.loadFontAsync(node.getRangeFontName(i, i + 1));
+            try {
+                // load font from selection  
+                yield figma.loadFontAsync(node.getRangeFontName(i, i + 1));
+            }
+            catch (error) {
+                console.error(error);
+            }
             const letterNode = figma.createText();
-            letterNode.fontSize = node.fontSize;
-            letterNode.fontName = node.fontName;
+            // letterNode.fontSize = node.fontSize;
+            try {
+                letterNode.fontSize = node.fontSize;
+            }
+            catch (error) {
+                console.error(error);
+            }
+            try {
+                letterNode.fontName = node.fontName;
+            }
+            catch (error) {
+                console.error(error);
+            }
             letterNode.characters = text.charAt(i);
             width += letterNode.width;
             // check if its a space character and change the width
@@ -80,8 +97,10 @@ function main() {
                 width += gap;
             }
             // push letters in nodes
-            node.parent.appendChild(letterNode);
-            nodes.push(letterNode);
+            if (node.parent) {
+                node.parent.appendChild(letterNode);
+                nodes.push(letterNode);
+            }
         }
         // Walk through each letter and position it on a circle of radius r.
         nodes.forEach(function (letterNode) {
@@ -95,11 +114,13 @@ function main() {
             countX = countX + letterNode.width;
         });
         // Put all nodes in a group
-        const nodesGroup = figma.group(nodes, node.parent);
-        nodesGroup.name = node.characters;
-        // Select and focus the group
-        figma.currentPage.selection = [nodesGroup];
-        figma.viewport.scrollAndZoomIntoView([nodesGroup]);
+        if (node.parent) {
+            const nodesGroup = figma.group(nodes, node.parent);
+            nodesGroup.name = node.characters;
+            // Select and focus the group
+            figma.currentPage.selection = [nodesGroup];
+            figma.viewport.scrollAndZoomIntoView([nodesGroup]);
+        }
         // delete original selection
         node.remove();
     });
