@@ -1,15 +1,16 @@
 {
     "name": "crack-font",
     "version": "1.0.0",
-    "description": "Your Figma plugin",
+    "description": "Non-destructive editable letter rotation for Figma",
     "main": "code.js",
     "scripts": {
-        "build": "tsc -p tsconfig.json"
+        "build": "tsc -p tsconfig.json",
+        "test": "tsc -p tsconfig.json && node --test tests/*.test.cjs"
     },
     "author": "",
     "license": "",
     "devDependencies": {
-        "@figma/plugin-typings": "^1.57.1",
-        "typescript": "*"
+        "@figma/plugin-typings": "1.117.0",
+        "typescript": "5.9.3"
     }
 }

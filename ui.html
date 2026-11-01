@@ -1,27 +1,54 @@
-<!-- <h2>Crack Font Plugin</h2>
-<p>Text is: <input id="text" value="5"></p>
-
-<p>It has: <span id="countOfCharacters"></span> Characters</p>
-<button id="triggerCrack">Make it crack</button>
-
-<script>
-    // Get event from code.ts
-    onmessage = (event) => {
-        const text = event.data.pluginMessage.selection;
-        const countCharacters = event.data.pluginMessage.selection.length;
-
-        document.getElementById("text").value = text;
-        document.getElementById("countOfCharacters").innerHTML = countCharacters;
-    }
-
-    // Action by Clicking Button #triggerCrack
-    document.getElementById('triggerCrack').onclick = () => {
-        const textbox = document.getElementById('text').value;
-        console.log(textbox);
-        // parent.postMessage({ pluginMessage: { type: 'create-rectangles', count } }, '*')
-    }
-
-    // document.getElementById('cancel').onclick = () => {
-    //   parent.postMessage({ pluginMessage: { type: 'cancel' } }, '*')
-    // }
-</script> -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; font: 12px/1.5 system-ui, sans-serif; background: var(--figma-color-bg, #fff); color: var(--figma-color-text, #222); }
+    h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.5px; }
+    p { margin: 0 0 16px; }
+    label { display: flex; justify-content: space-between; font-weight: 600; }
+    input { width: 100%; margin: 12px 0 16px; accent-color: #635bff; }
+    .buttons { display: flex; gap: 8px; }
+    button { flex: 1; padding: 9px; border: 1px solid var(--figma-color-border, #bbb); border-radius: 6px; font: inherit; font-weight: 600; color: inherit; background: var(--figma-color-bg-secondary, #eee); cursor: pointer; }
+    #apply { color: #fff; background: #554bdb; border-color: #554bdb; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #8b83ff; outline-offset: 3px; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #status { margin-top: 14px; min-height: 54px; overflow-wrap: anywhere; }
+    #status.error { color: var(--figma-color-text-danger, #b42318); }
+    small { display: block; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Crack Font</h1>
+  <p>Give editable letters a little disorder.<br>Your original stays visible and unchanged.</p>
+  <label for="strength">Rotation strength <output id="value" for="strength">+/-2 degrees</output></label>
+  <input id="strength" type="range" min="0" max="15" step="0.5" value="2">
+  <div class="buttons"><button id="apply">Apply</button><button id="reroll">Reroll</button></div>
+  <div id="status" role="status" aria-live="polite">Select top-level, single-line text with Auto width. The effect appears below it.</div>
+  <small>Up to 200 characters. ASCII and precomposed Latin-1 only.</small>
+  <script>
+    const slider = document.getElementById('strength');
+    const value = document.getElementById('value');
+    const status = document.getElementById('status');
+    const buttons = Array.from(document.querySelectorAll('button'));
+    slider.oninput = () => { value.textContent = '+/-' + slider.value + ' degrees'; };
+    buttons.forEach(button => button.onclick = () => {
+      buttons.forEach(b => { b.disabled = true; });
+      status.className = '';
+      status.textContent = 'Loading fonts and updating letters...';
+      parent.postMessage({ pluginMessage: { type: button.id, strength: Number(slider.value) } }, '*');
+    });
+    window.onmessage = event => {
+      if (event.source !== parent) return;
+      const msg = event.data && event.data.pluginMessage;
+      if (!msg || msg.type !== 'result') return;
+      buttons.forEach(b => { b.disabled = false; });
+      status.className = msg.ok ? '' : 'error';
+      status.textContent = msg.message;
+    };
+  </script>
+</body>
+</html>
