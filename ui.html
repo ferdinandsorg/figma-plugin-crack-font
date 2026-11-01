@@ -52,7 +52,7 @@
     }
     function render() {
       const strength = Number(slider.value);
-      value.textContent = '2' + strength + '2';
+      value.textContent = String.fromCharCode(177) + strength + String.fromCharCode(176);
       function letters(container, text, values) {
         container.replaceChildren();
         Array.from(text).forEach((char, i) => {
