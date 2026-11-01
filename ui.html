@@ -7,48 +7,121 @@
     :root { color-scheme: light dark; }
     * { box-sizing: border-box; }
     body { margin: 0; padding: 20px; font: 12px/1.5 system-ui, sans-serif; background: var(--figma-color-bg, #fff); color: var(--figma-color-text, #222); }
-    h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.5px; }
-    p { margin: 0 0 16px; }
-    label { display: flex; justify-content: space-between; font-weight: 600; }
-    input { width: 100%; margin: 12px 0 16px; accent-color: #635bff; }
+    h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -.5px; }
+    p { margin: 0 0 18px; }
+    label { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; }
+    .glyph { display: inline-block; white-space: pre; transform-origin: center; }
+    input { width: 100%; margin: 14px 0 20px; accent-color: #635bff; }
+    .preview-field { display: flex; align-items: center; justify-content: center; min-height: 112px; padding: 18px; border-radius: 8px; background: #ededf0; color: #25252c; border: 1px solid #d4d4db; }
+    .figma-dark .preview-field { background: #38383e; color: #f2f2f5; border-color: #55555e; }
+    #preview { width: 100%; text-align: center; font-size: 24px; line-height: 1.8; overflow-wrap: anywhere; }
+    small { display: block; margin: 6px 0 16px; opacity: .75; }
     .buttons { display: flex; gap: 8px; }
     button { flex: 1; padding: 9px; border: 1px solid var(--figma-color-border, #bbb); border-radius: 6px; font: inherit; font-weight: 600; color: inherit; background: var(--figma-color-bg-secondary, #eee); cursor: pointer; }
     #apply { color: #fff; background: #554bdb; border-color: #554bdb; }
     button:focus-visible, input:focus-visible { outline: 2px solid #8b83ff; outline-offset: 3px; }
-    button:disabled { opacity: .5; cursor: wait; }
-    #status { margin-top: 14px; min-height: 54px; overflow-wrap: anywhere; }
+    button:disabled, input:disabled { opacity: .5; cursor: wait; }
+    #status { margin-top: 12px; min-height: 36px; overflow-wrap: anywhere; }
     #status.error { color: var(--figma-color-text-danger, #b42318); }
-    small { display: block; margin-top: 10px; }
+    #check { margin-top: 8px; width: 100%; }
   </style>
 </head>
 <body>
   <h1>Crack Font</h1>
-  <p>Give editable letters a little disorder.<br>Your original stays visible and unchanged.</p>
-  <label for="strength">Rotation strength <output id="value" for="strength">+/-2 degrees</output></label>
-  <input id="strength" type="range" min="0" max="15" step="0.5" value="2">
-  <div class="buttons"><button id="apply">Apply</button><button id="reroll">Reroll</button></div>
-  <div id="status" role="status" aria-live="polite">Select top-level, single-line text with Auto width. The effect appears below it.</div>
-  <small>Up to 200 characters. ASCII and precomposed Latin-1 only.</small>
+  <p>Editable letters. A little disorder.<br>Your original stays visible and unchanged.</p>
+  <label for="strength"><span id="label-art" aria-hidden="true"></span><output id="value" for="strength">&#177;2&#176;</output></label>
+  <input id="strength" aria-label="Rotation strength" aria-describedby="value" type="range" min="0" max="15" step="0.5" value="2" disabled>
+  <div class="preview-field"><div id="preview" role="img" aria-label="Select text to preview"></div></div>
+  <small>System-font preview. Angles match Apply; final letters keep original typography. Long text wraps here only.</small>
+  <div class="buttons"><button id="apply" disabled>Apply</button><button id="reroll" disabled>Reroll</button></div>
+  <div id="status" role="status" aria-live="polite">Connecting to Figma...</div>
+  <button id="check" hidden>Check connection</button>
   <script>
-    const slider = document.getElementById('strength');
-    const value = document.getElementById('value');
-    const status = document.getElementById('status');
-    const buttons = Array.from(document.querySelectorAll('button'));
-    slider.oninput = () => { value.textContent = '+/-' + slider.value + ' degrees'; };
+    const CHANNEL = 'crack-font-ui-v1';
+    const session = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    const slider = document.getElementById('strength'), value = document.getElementById('value');
+    const status = document.getElementById('status'), preview = document.getElementById('preview');
+    const label = document.getElementById('label-art'), check = document.getElementById('check');
+    const buttons = [document.getElementById('apply'), document.getElementById('reroll')];
+    let selection = null, coefficients = [], labelCoefficients = [], connected = false, active = 0, counter = 0, timer, attempts = 0;
+    const random = n => Array.from({ length: n }, () => Math.random() * 2 - 1);
+    const send = message => parent.postMessage({ pluginMessage: { ...message, channel: CHANNEL, session } }, '*');
+    function controls() {
+      slider.disabled = !connected || !!active;
+      buttons.forEach(b => { b.disabled = !connected || !!active || !selection || !selection.valid; });
+    }
+    function render() {
+      const strength = Number(slider.value);
+      value.textContent = '2' + strength + '2';
+      function letters(container, text, values) {
+        container.replaceChildren();
+        Array.from(text).forEach((char, i) => {
+          const span = document.createElement('span'); span.className = 'glyph'; span.textContent = char;
+          span.style.transform = 'rotate(' + (values[i] * strength) + 'deg)'; container.appendChild(span);
+        });
+      }
+      letters(label, 'Rotation strength', labelCoefficients);
+      const text = selection && selection.valid ? selection.text : 'Select text to preview';
+      preview.setAttribute('aria-label', text);
+      letters(preview, text, selection && selection.valid ? coefficients : Array.from(text, () => 0));
+      // Fit a long-text overview without pushing the actions out of the panel; rotations have line padding.
+      preview.style.fontSize = Math.min(24, Math.max(9, Math.sqrt(16000 / Math.max(1, text.length)))) + 'px';
+    }
+    function updateSelection(next) {
+      if (!next || typeof next.valid !== 'boolean' || typeof next.text !== 'string' || next.text.length > 200 ||
+          typeof next.id !== 'string' || typeof next.pageId !== 'string' || !Number.isSafeInteger(next.revision) ||
+          (selection && next.revision < selection.revision)) return;
+      if (!selection || selection.text !== next.text) coefficients = random(next.text.length);
+      selection = next; render(); controls();
+    }
+    function watchdog() {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        status.className = 'error'; check.hidden = false;
+        status.textContent = active ? 'No completion received. Checking Figma; controls stay locked until it confirms the operation ended.' : 'No connection to Figma. Try Check connection or reopen the plugin.';
+        send({ type: connected ? 'status' : 'ready', requestId: active });
+        if (!connected && ++attempts < 3) watchdog();
+      }, 5000);
+    }
+    function finish(msg) {
+      if (!active || msg.requestId !== active || typeof msg.ok !== 'boolean' || typeof msg.message !== 'string') return;
+      active = 0; clearTimeout(timer); check.hidden = true;
+      updateSelection(msg.selection); controls();
+      status.className = msg.ok ? '' : 'error'; status.textContent = msg.message;
+    }
+    slider.oninput = () => { if (!active) render(); };
     buttons.forEach(button => button.onclick = () => {
-      buttons.forEach(b => { b.disabled = true; });
-      status.className = '';
-      status.textContent = 'Loading fonts and updating letters...';
-      parent.postMessage({ pluginMessage: { type: button.id, strength: Number(slider.value) } }, '*');
+      if (button.disabled || active || !selection) return;
+      if (button.id === 'reroll') { coefficients = random(selection.text.length); labelCoefficients = random(17); render(); }
+      active = ++counter; controls(); check.hidden = true; status.className = '';
+      status.textContent = 'Waiting for Figma...';
+      send({ type: button.id, requestId: active, strength: Number(slider.value), target: selection,
+        angles: coefficients.map(c => c * Number(slider.value)) });
+      watchdog();
     });
+    check.onclick = () => { send({ type: connected ? 'status' : 'ready', requestId: active }); watchdog(); };
     window.onmessage = event => {
-      if (event.source !== parent) return;
       const msg = event.data && event.data.pluginMessage;
-      if (!msg || msg.type !== 'result') return;
-      buttons.forEach(b => { b.disabled = false; });
-      status.className = msg.ok ? '' : 'error';
-      status.textContent = msg.message;
+      // Host bridges may have null/non-parent sources. A private 128-bit capability authenticates replies.
+      if (!msg || msg.channel !== CHANNEL || msg.session !== session) return;
+      if (msg.type === 'state' && Number.isSafeInteger(msg.activeRequestId) && msg.activeRequestId >= 0) {
+        if (!active && msg.activeRequestId && msg.activeRequestId <= counter) return;
+        if (active && ((msg.requestId !== active && msg.activeRequestId !== active) ||
+            (msg.activeRequestId && msg.activeRequestId !== active))) return;
+        connected = true; updateSelection(msg.selection);
+        if (active && msg.result && msg.result.requestId === active && !msg.activeRequestId) finish(msg.result);
+        else if (msg.activeRequestId) { active = msg.activeRequestId; counter = Math.max(counter, active); watchdog(); }
+        else if (active) finish({ requestId: active, ok: false, message: 'Figma is idle; no completion was received. Review the canvas before retrying.', selection: msg.selection });
+        else { clearTimeout(timer); check.hidden = true; status.className = ''; status.textContent = selection && selection.valid ? 'Preview ready. Apply creates letters below the original.' : (selection && selection.reason || 'Select text.'); }
+        controls();
+      } else if (msg.type === 'selection') {
+        updateSelection(msg.selection);
+        if (!active) status.textContent = selection && selection.valid ? 'Preview ready.' : (selection && selection.reason || 'Select text.');
+      } else if (msg.type === 'progress' && msg.requestId === active && typeof msg.message === 'string') {
+        status.textContent = msg.message; watchdog();
+      } else if (msg.type === 'result') finish(msg);
     };
+    labelCoefficients = random(17); render(); send({ type: 'ready' }); watchdog();
   </script>
 </body>
 </html>

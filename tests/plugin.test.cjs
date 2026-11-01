@@ -7,11 +7,29 @@ const vm = require('node:vm');
 const code = readFileSync(resolve(__dirname, '../code.js'), 'utf8');
 const identity = (x = 0, y = 0) => [[1, 0, x], [0, 1, y]];
 const copy = value => JSON.parse(JSON.stringify(value));
+const CHANNEL = 'crack-font-ui-v1', SESSION = '0123456789abcdef0123456789abcdef';
+const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
+function fakeClock() {
+  let now = 0, nextId = 0;
+  const timers = new Map();
+  return {
+    setTimeout(fn, delay) { const id = ++nextId; timers.set(id, { fn, at: now + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    async tick(ms) {
+      await settle(); now += ms;
+      for (const [id, timer] of [...timers]) if (timer.at <= now) { timers.delete(id); timer.fn(); }
+      await settle();
+    },
+    get size() { return timers.size; }
+  };
+}
 
 function harness(text = 'Ab c', options = {}) {
   let nextId = 0;
   let mutationCount = 0;
   const messages = [], fontLoads = [], nodes = [], draws = [];
+  const clock = fakeClock(), errors = [], listeners = new Map();
+  let requestId = 0;
   let failMutation = null;
   let failAfter = 0;
   const changed = kind => {
@@ -81,6 +99,7 @@ function harness(text = 'Ab c', options = {}) {
   const source = new Text(text); source._t = identity(100, 200); page.appendChild(source); page.selection = [source];
   const figma = {
     currentPage: page,
+    on(event, callback) { listeners.set(event, callback); },
     ui: { postMessage(message) { messages.push(message); } },
     showUI(html, opts) { this.uiOptions = opts; },
     viewport: { scrollAndZoomIntoView() {} },
@@ -98,11 +117,24 @@ function harness(text = 'Ab c', options = {}) {
   };
   const math = Object.create(Math);
   math.random = () => draws.length ? draws.shift() : .5;
-  vm.runInNewContext(code, { figma, __html__: '', Math: math });
-  return { figma, page, source, messages, fontLoads, nodes, draws, Node,
+  const start = () => {
+    vm.runInNewContext(code, { figma, __html__: '', Math: math, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout,
+      console: { error: (...args) => errors.push(args) } });
+    figma.ui.onmessage({ type: 'ready', channel: CHANNEL, session: SESSION });
+  };
+  start();
+  const target = () => { figma.ui.onmessage({ type: 'status', channel: CHANNEL, session: SESSION }); return messages.at(-1).selection; };
+  const raw = msg => figma.ui.onmessage({ channel: CHANNEL, session: SESSION, ...msg });
+  return { figma, page, source, messages, fontLoads, nodes, draws, Node, clock, errors, start, raw, target,
+    emit(event) { listeners.get(event)(); },
     fail(kind, after = 0) { failMutation = kind; failAfter = after; },
     get mutationCount() { return mutationCount; },
-    async send(type = 'apply', strength = 2) { await figma.ui.onmessage({ type, strength }); return messages.at(-1); },
+    async send(type = 'apply', strength = 2, extra = {}) {
+      const selected = target();
+      const angles = Array.from(selected.text, () => (draws.length ? draws.shift() * 2 - 1 : 0) * (typeof strength === 'number' ? strength : 0));
+      await raw({ type, strength, target: selected, angles, requestId: ++requestId, ...extra });
+      return messages.findLast(m => m.type === 'result');
+    },
     groups() { return page.children.filter(n => n.type === 'GROUP'); }
   };
 }
@@ -129,11 +161,11 @@ test('Apply preserves original and range formatting, preflights every font befor
   assert.ok(h.fontLoads.slice(0, 2).every(l => l.mutationCount === 0));
 });
 
-test('uniform range uses -strength and approaches +strength, with no +1 bug', async () => {
+test('backend applies exact bounded CSS preview angles with the Figma sign inverted', async () => {
   const h = harness('ABC'); h.draws.push(0, .5, 1 - Number.EPSILON);
   await h.send();
   const angles = h.groups()[0].children.map(angle);
-  near(angles[0], -2); near(angles[1], 0); near(angles[2], 2);
+  near(angles[0], 2); near(angles[1], 0); near(angles[2], -2);
   assert.ok(angles.every(a => a >= -2 && a <= 2));
 });
 
@@ -159,7 +191,7 @@ test('saved group supports reopening and translation without source; arbitrary g
   group.x += 50; group.y += 70; const centers = group.children.map(glyphCenter);
   h.source.remove();
   // Re-execute plugin in a fresh VM; only plugin-owned persisted metadata survives.
-  vm.runInNewContext(code, { figma: h.figma, __html__: '' });
+  h.start();
   assert.equal((await h.send('reroll')).ok, true);
   group.children.forEach((n, i) => glyphCenter(n).forEach((v, j) => near(v, centers[i][j])));
   const arbitrary = new h.Node('GROUP'); h.page.appendChild(arbitrary); h.page.selection = [arbitrary];
@@ -192,9 +224,11 @@ test('failed reroll rolls back existing letters', async () => {
   group.children.forEach((n, i) => n.absoluteTransform.flat().forEach((v, j) => near(v, before[i].flat()[j])));
 });
 
-test('reroll font failure has no mutations', async () => {
+test('font successes are cached; after reopening a font failure has no mutations', async () => {
   const options = {}; const h = harness('AB', options); await h.send();
-  options.failFont = 'Second'; const count = h.mutationCount;
+  const loads = h.fontLoads.length;
+  await h.send('reroll'); assert.equal(h.fontLoads.length, loads);
+  options.failFont = 'Second'; h.start(); const count = h.mutationCount;
   assert.equal((await h.send('reroll')).ok, false); assert.equal(h.mutationCount, count);
 });
 
@@ -243,8 +277,7 @@ test('locked ancestors, nested/auto-layout, rotated and fixed-width text are rej
 test('invalid strengths are rejected at the plugin boundary', async () => {
   const h = harness();
   for (const value of [-1, 16, NaN, Infinity, '2', null, undefined]) {
-    await h.figma.ui.onmessage({ type: 'apply', strength: value });
-    assert.equal(h.messages.at(-1).ok, false);
+    assert.equal((await h.send('apply', 2, { strength: value })).ok, false);
   }
   assert.equal(h.mutationCount, 0);
 });
@@ -266,7 +299,7 @@ test('concurrent clicks do not create duplicate groups', async () => {
   let unblock; const gate = new Promise(resolve => { unblock = resolve; });
   const h = harness('AB', { fontHook: () => gate });
   const first = h.send(); const second = h.send(); unblock(); await Promise.all([first, second]);
-  assert.equal(h.groups().length, 1); assert.equal(h.messages.length, 1);
+  assert.equal(h.groups().length, 1); assert.equal(h.messages.filter(m => m.type === 'result').length, 1);
 });
 
 test('source lookup is bounded and ignores unrelated corrupt metadata', async () => {
@@ -289,36 +322,220 @@ test('multiple source-linked groups report ambiguity instead of creating more ou
 
 test('asynchronous group locks and glyph shears are rejected', async () => {
   const options = {}; const h = harness('AB', options); await h.send(); const group = h.groups()[0];
+  h.start();
   options.fontHook = () => { group.locked = true; };
   const count = h.mutationCount;
   assert.equal((await h.send('reroll')).ok, false); assert.equal(h.mutationCount, count);
   group.locked = false;
+  h.start();
   options.fontHook = () => { group.children[0]._t[0][1] = .2; };
   assert.equal((await h.send('reroll')).ok, false); assert.equal(h.mutationCount, count);
 });
 
-test('standalone UI sends numeric strength, disables in-flight actions and renders results safely', () => {
+function uiHarness() {
   const html = readFileSync(resolve(__dirname, '../ui.html'), 'utf8');
-  const elements = Object.fromEntries(['strength', 'value', 'status', 'apply', 'reroll'].map(id => [id, { id, disabled: false, textContent: '', className: '' }]));
+  class Element {
+    constructor(id) { this.id = id; this.disabled = ['apply', 'reroll', 'strength'].includes(id); this.children = []; this.style = {}; this.attributes = {}; this.textContent = ''; this.className = ''; }
+    replaceChildren() { this.children = []; }
+    appendChild(node) { this.children.push(node); }
+    setAttribute(key, value) { this.attributes[key] = value; }
+  }
+  const elements = Object.fromEntries(['strength', 'value', 'status', 'apply', 'reroll', 'label-art', 'preview', 'check'].map(id => [id, new Element(id)]));
   elements.strength.value = '2';
-  const sent = [], parent = { postMessage: msg => sent.push(msg) }, window = {};
+  const sent = [], parent = { postMessage: msg => sent.push(copy(msg.pluginMessage)) }, window = {}, draws = [], clock = fakeClock();
   const buttons = [elements.apply, elements.reroll];
+  const math = Object.create(Math); math.random = () => draws.length ? draws.shift() : .25;
   vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], {
-    document: { getElementById: id => elements[id], querySelectorAll: () => buttons }, parent, window
+    document: { getElementById: id => elements[id], createElement: () => new Element('span') }, parent, window, Math: math,
+    crypto: { getRandomValues: array => array.fill(42) }, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout
   });
-  elements.strength.value = '4.5'; elements.strength.oninput();
-  assert.equal(elements.value.textContent, '+/-4.5 degrees');
-  elements.apply.onclick();
-  assert.equal(sent[0].pluginMessage.type, 'apply'); assert.equal(sent[0].pluginMessage.strength, 4.5);
-  assert.ok(buttons.every(b => b.disabled));
-  window.onmessage({ source: {}, data: { pluginMessage: { type: 'result', ok: true, message: 'spoof' } } });
-  assert.ok(buttons.every(b => b.disabled));
-  window.onmessage({ source: parent, data: { pluginMessage: { type: 'result', ok: false, message: '<b>Error</b>' } } });
-  assert.ok(buttons.every(b => !b.disabled));
-  assert.equal(elements.status.textContent, '<b>Error</b>'); assert.equal(elements.status.className, 'error');
-  elements.reroll.onclick(); assert.equal(sent[1].pluginMessage.type, 'reroll');
-  window.onmessage({ source: parent, data: { pluginMessage: { type: 'result', ok: true, message: 'Updated' } } });
-  assert.equal(elements.status.className, ''); assert.equal(elements.status.textContent, 'Updated');
+  const target = { id: 'text', pageId: 'page', text: 'Hello world', revision: 0, valid: true, reason: '' };
+  const receive = (msg, source = null) => window.onmessage({ source, data: { pluginMessage: { channel: CHANNEL, session: sent[0].session, ...msg } } });
+  const connect = () => receive({ type: 'state', activeRequestId: 0, requestId: 0, selection: target });
+  return { elements, sent, parent, window, buttons, draws, clock, target, receive, connect };
+}
+
+test('UI handshake accepts authenticated null-source replies and rejects missing/wrong capabilities', () => {
+  const u = uiHarness(); assert.equal(u.sent[0].type, 'ready'); assert.ok(u.buttons.every(b => b.disabled));
+  u.window.onmessage({ source: {}, data: { pluginMessage: { type: 'state', activeRequestId: 0, selection: u.target } } });
+  assert.ok(u.buttons.every(b => b.disabled));
+  u.receive({ type: 'state', activeRequestId: 0, session: 'bad', selection: u.target });
+  assert.ok(u.buttons.every(b => b.disabled));
+  u.connect(); assert.ok(u.buttons.every(b => !b.disabled));
+  assert.equal(u.elements.preview.children.map(n => n.textContent).join(''), 'Hello world');
+});
+
+test('UI slider cracks label and preview deterministically; Apply sends those exact angles; zero straightens', () => {
+  const u = uiHarness(); u.connect(); const e = u.elements;
+  e.strength.value = '4.5'; e.strength.oninput(); assert.equal(e.value.textContent, '\u00b14.5\u00b0');
+  assert.equal(e['label-art'].children.map(n => n.textContent).join(''), 'Rotation strength');
+  assert.ok(e['label-art'].children.every(n => n.style.transform === 'rotate(-2.25deg)'));
+  assert.ok(e.preview.children.every(n => n.style.transform === 'rotate(-2.25deg)'));
+  assert.equal(u.sent.length, 1, 'dragging is UI-only');
+  e.apply.onclick(); const request = u.sent.at(-1);
+  assert.equal(request.type, 'apply'); assert.equal(request.strength, 4.5);
+  assert.ok(request.angles.every(a => a === -2.25)); assert.equal(request.target.id, 'text');
+  assert.ok(u.buttons.every(b => b.disabled)); assert.equal(e.strength.disabled, true);
+  u.receive({ type: 'result', requestId: request.requestId, ok: false, message: '<b>Error</b>', selection: u.target });
+  assert.ok(u.buttons.every(b => !b.disabled)); assert.equal(e.status.textContent, '<b>Error</b>');
+  e.strength.value = '0'; e.strength.oninput();
+  assert.ok(e['label-art'].children.concat(e.preview.children).every(n => n.style.transform === 'rotate(0deg)'));
+});
+
+test('UI ignores stale result/state/progress while a newer request is active', () => {
+  const u = uiHarness(); u.connect(); u.elements.apply.onclick(); const first = u.sent.at(-1).requestId;
+  u.receive({ type: 'result', requestId: first, ok: true, message: 'Updated', selection: u.target });
+  u.draws.push(...Array(40).fill(.9)); u.elements.reroll.onclick();
+  const second = u.sent.at(-1); assert.equal(second.type, 'reroll'); assert.ok(second.angles.every(a => a > 0));
+  u.receive({ type: 'result', requestId: first, ok: true, message: 'stale' });
+  u.receive({ type: 'progress', requestId: first, message: 'stale' });
+  u.receive({ type: 'state', requestId: first, activeRequestId: 0, selection: u.target });
+  assert.ok(u.buttons.every(b => b.disabled)); assert.notEqual(u.elements.status.textContent, 'stale');
+  u.receive({ type: 'result', requestId: second.requestId, ok: true, message: 'Updated', selection: u.target });
+  assert.ok(u.buttons.every(b => !b.disabled));
+  u.receive({ type: 'state', requestId: second.requestId, activeRequestId: second.requestId, selection: u.target });
+  assert.ok(u.buttons.every(b => !b.disabled), 'a delayed busy state cannot relock a completed request');
+});
+
+test('UI watchdog probes backend without unlocking duplicates; cached result recovers lost delivery', async () => {
+  const u = uiHarness(); u.connect(); u.elements.apply.onclick(); const requestId = u.sent.at(-1).requestId;
+  await u.clock.tick(5000);
+  assert.equal(u.sent.at(-1).type, 'status'); assert.equal(u.sent.at(-1).requestId, requestId);
+  assert.ok(u.buttons.every(b => b.disabled)); assert.match(u.elements.status.textContent, /stay locked/);
+  u.receive({ type: 'state', activeRequestId: requestId, requestId, selection: u.target });
+  assert.ok(u.buttons.every(b => b.disabled));
+  u.receive({ type: 'state', activeRequestId: 0, requestId, selection: u.target,
+    result: { type: 'result', requestId, ok: true, message: 'Recovered', selection: u.target } });
+  assert.ok(u.buttons.every(b => !b.disabled)); assert.equal(u.elements.status.textContent, 'Recovered');
+});
+
+test('UI startup retries handshake and never enables actions on silence', async () => {
+  const u = uiHarness(); await u.clock.tick(5000);
+  assert.equal(u.sent.at(-1).type, 'ready'); assert.ok(u.buttons.every(b => b.disabled));
+  assert.match(u.elements.status.textContent, /No connection/);
+});
+
+test('font deadline identifies pending font, releases busy and never mutates after late resolution', async () => {
+  let resolveFont;
+  const gate = new Promise(resolve => { resolveFont = resolve; });
+  const options = { fontHook: font => font.family === 'Second' ? gate : undefined };
+  const h = harness('AB', options), original = snapshot(h.source);
+  const operation = h.send(); await h.clock.tick(10000);
+  const result = await operation;
+  assert.equal(result.ok, false); assert.match(result.message, /Timed out loading Second Regular/);
+  assert.equal(h.mutationCount, 0); assert.deepEqual(snapshot(h.source), original);
+  await h.raw({ type: 'status' }); assert.equal(h.messages.at(-1).activeRequestId, 0);
+  resolveFont(); await settle(); assert.equal(h.mutationCount, 0); assert.equal(h.groups().length, 0);
+  options.fontHook = undefined;
+  assert.equal((await h.send()).ok, true); assert.equal(h.groups().length, 1);
+  assert.equal(h.clock.size, 0);
+});
+
+test('late resolution of a timed-out font cannot finish an old operation during a retry', async () => {
+  const resolvers = [];
+  const options = { fontHook: () => new Promise(resolve => resolvers.push(resolve)) };
+  const h = harness('A', options);
+  const first = h.send(); await h.clock.tick(10000); assert.equal((await first).ok, false);
+  const second = h.send(); await settle(); assert.equal(resolvers.length, 2);
+  resolvers[0](); await settle(); assert.equal(h.mutationCount, 0);
+  resolvers[1](); assert.equal((await second).ok, true); assert.equal(h.groups().length, 1);
+  assert.equal(h.messages.filter(m => m.type === 'result').length, 2);
+});
+
+test('ready and selection/page events publish preview text without font loading or mutation', async () => {
+  const h = harness('Ab c');
+  assert.equal(h.messages[0].type, 'state'); assert.equal(h.messages[0].selection.text, 'Ab c');
+  h.page.selection = []; h.emit('selectionchange');
+  assert.equal(h.messages.at(-1).selection.valid, false);
+  h.page.selection = [h.source]; h.emit('selectionchange');
+  assert.equal(h.messages.at(-1).selection.text, 'Ab c');
+  const other = new h.Node('PAGE'); other.selection = []; h.figma.currentPage = other; h.emit('currentpagechange');
+  assert.equal(h.messages.at(-1).selection.pageId, other.id);
+  assert.equal(h.fontLoads.length, 0); assert.equal(h.mutationCount, 0);
+  h.figma.currentPage = h.page; await h.send();
+  const loads = h.fontLoads.length; h.emit('selectionchange');
+  assert.equal(h.messages.at(-1).selection.text, 'Ab c'); assert.equal(h.fontLoads.length, loads);
+});
+
+test('selection, page, source deletion and away-and-back changes during fonts abort before creation', async () => {
+  for (const change of [
+    h => { h.page.selection = []; h.emit('selectionchange'); },
+    h => { const page = new h.Node('PAGE'); page.selection = []; h.figma.currentPage = page; h.emit('currentpagechange'); },
+    h => { h.source.remove(); },
+    h => { h.page.selection = []; h.emit('selectionchange'); h.page.selection = [h.source]; h.emit('selectionchange'); }
+  ]) {
+    let release; const gate = new Promise(resolve => { release = resolve; });
+    const h = harness('AB', { fontHook: () => gate }); const operation = h.send();
+    change(h); const count = h.mutationCount; release();
+    assert.equal((await operation).ok, false); assert.equal(h.mutationCount, count); assert.equal(h.groups().length, 0);
+  }
+});
+
+test('stale preview IDs/text/revision and malformed angles cannot mutate the canvas', async () => {
+  for (const override of [
+    h => ({ target: { ...h.target(), id: 'wrong' } }),
+    h => ({ target: { ...h.target(), text: 'XY' } }),
+    h => ({ target: { ...h.target(), revision: 9 } }),
+    () => ({ angles: [0] }), () => ({ angles: [0, 3] }), () => ({ angles: [NaN, 0] }),
+    () => ({ angles: ['0', 0] }), () => ({ angles: null }), () => ({ angles: new Array(2) })
+  ]) {
+    const h = harness('AB'); assert.equal((await h.send('apply', 2, override(h))).ok, false);
+    assert.equal(h.mutationCount, 0);
+  }
+});
+
+test('idle status fences off delayed actions and request IDs are never executed twice', async () => {
+  const h = harness('AB'), target = h.target();
+  await h.raw({ type: 'status', requestId: 1 });
+  await h.raw({ type: 'apply', requestId: 1, strength: 2, target, angles: [0, 0] });
+  assert.equal(h.mutationCount, 0);
+  await h.raw({ type: 'apply', requestId: 2, strength: 2, target, angles: [1, -1] });
+  assert.equal(h.messages.at(-1).ok, true); const count = h.mutationCount;
+  await h.raw({ type: 'apply', requestId: 2, strength: 2, target, angles: [0, 0] });
+  assert.equal(h.mutationCount, count); assert.equal(h.messages.at(-1).type, 'state');
+  assert.equal(h.messages.at(-1).result.requestId, 2);
+});
+
+test('unexpected API errors are logged and reported; validation errors are not logged', async () => {
+  const h = harness('AB'); h.fail('clone');
+  const result = await h.send(); assert.equal(result.ok, false); assert.match(result.message, /Unexpected Figma error/);
+  assert.ok(h.errors.length); assert.equal(h.page.children.length, 1);
+  const normal = harness(''); await normal.send(); assert.equal(normal.errors.length, 0);
+});
+
+test('changing the original text cannot apply new preview angles to stale effect letters', async () => {
+  const h = harness('AB'); await h.send(); h.page.selection = [h.source]; h.source.characters = 'CD';
+  const count = h.mutationCount;
+  assert.match((await h.send()).message, /original text changed/); assert.equal(h.mutationCount, count);
+});
+
+test('backend uses UI Apply and Reroll angles end-to-end with unchanged originals and no duplicates', async () => {
+  const h = harness('Hello world'), u = uiHarness(), original = snapshot(h.source);
+  // Bridge the real UI script to the real compiled backend using the UI's private session.
+  h.start();
+  const first = u.sent[0];
+  // A fresh backend is needed to bind this UI's session rather than the harness default.
+  const clock = h.clock;
+  vm.runInNewContext(code, { figma: h.figma, __html__: '', setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, console });
+  await h.figma.ui.onmessage(first);
+  u.receive({ ...h.messages.at(-1), session: first.session });
+  for (const button of [u.elements.apply, u.elements.reroll]) {
+    u.draws.push(...Array(60).fill(.9)); button.onclick(); const request = u.sent.at(-1);
+    await h.figma.ui.onmessage(request);
+    const result = h.messages.at(-1); assert.equal(result.ok, true); u.receive(result);
+    h.groups()[0].children.forEach((n, i) => near(angle(n), -request.angles[i]));
+    assert.equal(h.groups().length, 1); assert.deepEqual(snapshot(h.source), original);
+  }
+});
+
+test('UI selection updates ignore older revisions and safely render long text without markup', () => {
+  const u = uiHarness(); u.connect();
+  const next = { ...u.target, revision: 2, text: '<b>'.repeat(66) };
+  u.receive({ type: 'selection', selection: next });
+  assert.equal(u.elements.preview.children.map(n => n.textContent).join(''), next.text);
+  assert.ok(parseFloat(u.elements.preview.style.fontSize) <= 10);
+  u.receive({ type: 'selection', selection: u.target });
+  assert.equal(u.elements.preview.attributes['aria-label'], next.text);
 });
 
 test('manifest retains Community identity and disallows network access', () => {

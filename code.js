@@ -10,8 +10,18 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 const DATA_KEY = 'crack-font-v1';
 const MAX_LETTERS = 200;
-let busy = false;
-function fail(message) { throw new Error(message); }
+const CHANNEL = 'crack-font-ui-v1';
+let session = '', activeRequestId = 0, lastRequestId = 0, revision = 0;
+let lastResult;
+const loadedFonts = new Set();
+class InputError extends Error {
+}
+function fail(message) { throw new InputError(message); }
+function send(message) {
+    if (session)
+        figma.ui.postMessage(Object.assign(Object.assign({}, message), { channel: CHANNEL, session }));
+}
+function progress(message) { send({ type: 'progress', requestId: activeRequestId, message }); }
 function assertPageNode(node) {
     let ancestor = node;
     while (ancestor && ancestor.type !== 'DOCUMENT') {
@@ -71,6 +81,36 @@ function readEffect(group) {
     }
     return data;
 }
+function selectionPreview() {
+    const selected = figma.currentPage.selection;
+    const target = { id: selected.length === 1 ? selected[0].id : '', pageId: figma.currentPage.id, text: '', revision };
+    try {
+        if (selected.length !== 1)
+            fail('Select exactly one text layer or Crack Font group.');
+        const node = selected[0];
+        if (node.type === 'TEXT') {
+            validateText(node);
+            target.text = node.characters;
+        }
+        else if (node.type === 'GROUP') {
+            assertPageNode(node);
+            target.text = readEffect(node).glyphs.map(g => {
+                const child = node.children.find(n => n.id === g.id);
+                if (!child || child.type !== 'TEXT' || child.characters !== g.text)
+                    fail('The generated letters were edited or removed.');
+                return g.text;
+            }).join('');
+        }
+        else
+            fail('Select a text layer or a group created by Crack Font.');
+        return Object.assign(Object.assign({}, target), { valid: true, reason: '' });
+    }
+    catch (error) {
+        if (!(error instanceof InputError))
+            console.error('Crack Font preview', error);
+        return Object.assign(Object.assign({}, target), { valid: false, reason: error instanceof Error ? error.message : 'Could not read selection.' });
+    }
+}
 function center(node) {
     const t = node.absoluteTransform;
     return { x: t[0][2] + t[0][0] * node.width / 2 + t[0][1] * node.height / 2,
@@ -85,15 +125,35 @@ function preflightFonts(nodes) {
             if (node.hasMissingFont)
                 fail('Resolve missing fonts before applying the effect.');
             for (const font of node.getRangeAllFontNames(0, node.characters.length)) {
-                fonts.set(JSON.stringify(font), font);
+                if (!loadedFonts.has(JSON.stringify(font)))
+                    fonts.set(JSON.stringify(font), font);
             }
         }
-        for (const font of fonts.values()) {
+        if (fonts.size) {
+            let waiting = true;
+            let timer;
+            const pending = new Set(Array.from(fonts.values(), f => `${f.family} ${f.style}`));
+            progress(`Loading fonts: ${Array.from(pending).join(', ')} (10 second limit)...`);
             try {
-                yield figma.loadFontAsync(font);
+                yield Promise.race([Promise.all(Array.from(fonts, (_a) => __awaiter(this, [_a], void 0, function* ([key, font]) {
+                        try {
+                            yield figma.loadFontAsync(font);
+                        }
+                        catch (_) {
+                            fail(`Could not load ${font.family} ${font.style}. No letters were changed.`);
+                        }
+                        if (waiting) {
+                            loadedFonts.add(key);
+                            pending.delete(`${font.family} ${font.style}`);
+                        }
+                    }))), new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(new InputError(`Timed out loading ${Array.from(pending).join(', ')}. No letters were changed. Check font availability and retry.`)), 10000);
+                    })]);
             }
-            catch (_) {
-                fail(`Could not load ${font.family} ${font.style}. No letters were changed.`);
+            finally {
+                waiting = false;
+                if (timer !== undefined)
+                    clearTimeout(timer);
             }
         }
         nodes.forEach((node, i) => {
@@ -104,7 +164,7 @@ function preflightFonts(nodes) {
         });
     });
 }
-function reroll(group, strength) {
+function reroll(group, angles, assertCurrent) {
     return __awaiter(this, void 0, void 0, function* () {
         assertPageNode(group);
         const data = readEffect(group);
@@ -124,6 +184,7 @@ function reroll(group, strength) {
         };
         const nodes = data.glyphs.map(getGlyph);
         yield preflightFonts(nodes);
+        assertCurrent();
         assertPageNode(group);
         if (JSON.stringify(readEffect(group)) !== JSON.stringify(data))
             fail('The group changed while fonts were loading. Please try again.');
@@ -138,6 +199,7 @@ function reroll(group, strength) {
         });
         // Snapshot page-space transforms. Group bounds can move when any child rotates.
         const before = nodes.map(node => node.absoluteTransform);
+        progress('Rotating existing letters...');
         const write = (node, t) => {
             const parent = group.absoluteTransform;
             node.relativeTransform = [[t[0][0], t[0][1], t[0][2] - parent[0][2]],
@@ -145,7 +207,8 @@ function reroll(group, strength) {
         };
         try {
             nodes.forEach((node, i) => {
-                const radians = ((Math.random() * 2 - 1) * strength) * Math.PI / 180;
+                // CSS angles are clockwise; Figma's positive rotation is counterclockwise.
+                const radians = -angles[i] * Math.PI / 180;
                 const c = Math.cos(radians), s = Math.sin(radians), p = positions[i];
                 write(node, [[c, s, p.x - c * node.width / 2 - s * node.height / 2],
                     [-s, c, p.y + s * node.width / 2 - c * node.height / 2]]);
@@ -157,11 +220,13 @@ function reroll(group, strength) {
         }
     });
 }
-function createEffect(source, strength) {
+function createEffect(source, angles, assertCurrent) {
     return __awaiter(this, void 0, void 0, function* () {
         validateText(source);
         yield preflightFonts([source]);
+        assertCurrent();
         validateText(source);
+        progress('Creating editable letters...');
         const letters = [];
         let group;
         try {
@@ -188,7 +253,7 @@ function createEffect(source, strength) {
                         dx: p.x - anchor.x, dy: p.y - anchor.y };
                 }) };
             group.setPluginData(DATA_KEY, JSON.stringify(data));
-            yield reroll(group, strength);
+            yield reroll(group, angles, assertCurrent);
             return group;
         }
         catch (error) {
@@ -201,8 +266,9 @@ function createEffect(source, strength) {
         }
     });
 }
-function apply(strength, rerollOnly) {
+function apply(msg) {
     return __awaiter(this, void 0, void 0, function* () {
+        const strength = msg.strength;
         if (typeof strength !== 'number' || !Number.isFinite(strength) || strength < 0 || strength > 15) {
             fail('Rotation strength must be a number between 0 and 15 degrees.');
         }
@@ -210,10 +276,24 @@ function apply(strength, rerollOnly) {
         if (selection.length !== 1)
             fail('Select exactly one text layer or Crack Font group.');
         const selected = selection[0];
+        const target = msg.target;
+        const assertCurrent = () => {
+            const now = selectionPreview();
+            if (!target || selected.removed || !now.valid || target.id !== now.id || target.pageId !== now.pageId ||
+                target.text !== now.text || target.revision !== now.revision) {
+                fail('Selection or text changed. Review the updated preview and try again.');
+            }
+        };
+        assertCurrent();
+        if (!Array.isArray(msg.angles) || msg.angles.length !== target.text.length || msg.angles.length > MAX_LETTERS ||
+            !Array.from(msg.angles).every(a => typeof a === 'number' && Number.isFinite(a) && Math.abs(a) <= strength)) {
+            fail('Preview angles are invalid. Review the preview and try again.');
+        }
+        const angles = msg.angles.slice();
         let group;
         if (selected.type === 'GROUP') {
             group = selected;
-            yield reroll(group, strength);
+            yield reroll(group, angles, assertCurrent);
         }
         else if (selected.type === 'TEXT') {
             validateText(selected);
@@ -234,12 +314,15 @@ function apply(strength, rerollOnly) {
                 fail('Multiple copies of this effect exist. Select the specific Crack Font group to reroll.');
             if (matches.length) {
                 group = matches[0];
-                yield reroll(group, strength);
+                if (readEffect(group).glyphs.map(g => g.text).join('') !== target.text) {
+                    fail('The original text changed since these letters were created. Delete the effect group and Apply again.');
+                }
+                yield reroll(group, angles, assertCurrent);
             }
             else {
-                if (rerollOnly)
+                if (msg.type === 'reroll')
                     fail('Apply once to create letters, then use Reroll.');
-                group = yield createEffect(selected, strength);
+                group = yield createEffect(selected, angles, assertCurrent);
             }
         }
         else {
@@ -249,30 +332,55 @@ function apply(strength, rerollOnly) {
         figma.viewport.scrollAndZoomIntoView([group]);
     });
 }
-figma.showUI(__html__, { width: 320, height: 330, themeColors: true });
+figma.showUI(__html__, { width: 360, height: 490, themeColors: true });
+for (const event of ['selectionchange', 'currentpagechange']) {
+    figma.on(event, () => { revision++; send({ type: 'selection', selection: selectionPreview() }); });
+}
 figma.ui.onmessage = (message) => __awaiter(void 0, void 0, void 0, function* () {
     if (!message || typeof message !== 'object')
         return;
     const msg = message;
-    if (msg.type === 'close') {
-        if (!busy)
-            figma.closePlugin();
+    if (msg.channel !== CHANNEL || typeof msg.session !== 'string' || !/^[a-f0-9]{32}$/.test(msg.session))
+        return;
+    if (msg.type === 'ready' && !session)
+        session = msg.session;
+    if (msg.session !== session)
+        return;
+    // An idle status probe fences off an action whose delivery was delayed or lost.
+    if (msg.type === 'status' && !activeRequestId && Number.isSafeInteger(msg.requestId)) {
+        lastRequestId = Math.max(lastRequestId, msg.requestId);
+    }
+    const state = () => send({ type: 'state', requestId: msg.requestId || 0, activeRequestId,
+        result: lastResult, selection: selectionPreview() });
+    if (msg.type === 'ready' || msg.type === 'status') {
+        state();
         return;
     }
     if (msg.type !== 'apply' && msg.type !== 'reroll')
         return;
-    if (busy)
+    if (!Number.isSafeInteger(msg.requestId) || msg.requestId < 1)
         return;
-    busy = true;
+    if (activeRequestId || msg.requestId <= lastRequestId) {
+        state();
+        return;
+    }
+    lastRequestId = activeRequestId = msg.requestId;
+    progress('Validating selection...');
+    let ok = false, resultMessage = '';
     try {
-        yield apply(msg.strength, msg.type === 'reroll');
-        figma.ui.postMessage({ type: 'result', ok: true, message: 'Letters updated. Your original text is unchanged.' });
+        yield apply(msg);
+        ok = true;
+        resultMessage = 'Letters updated. Your original text is unchanged.';
     }
     catch (error) {
-        figma.ui.postMessage({ type: 'result', ok: false,
-            message: error instanceof Error ? error.message : 'Could not update letters. Your original text is unchanged.' });
+        if (!(error instanceof InputError))
+            console.error('Crack Font operation', error);
+        resultMessage = error instanceof InputError ? error.message :
+            `Unexpected Figma error: ${error instanceof Error ? error.message : String(error)}. Your original text is unchanged. See the plugin console for details.`;
     }
     finally {
-        busy = false;
+        activeRequestId = 0;
+        lastResult = { type: 'result', requestId: msg.requestId, ok, message: resultMessage, selection: selectionPreview() };
+        send(lastResult);
     }
 });
