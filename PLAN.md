@@ -99,11 +99,15 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
 - Tests (`npm test`, vitest): 9 Unit-Tests für die Mathematik, 17 Tests mit Figma-Mock auf dem gebauten `dist/code.js` (Mock bildet Figmas Gruppen-Koordinaten, versteckte Kinder und Leerzeichen-Breite nach).
 - In Figma per MCP mit dem echten Code geprüft: Headline 9 Buchstaben in 125 ms, Kerning-Beispiel 16 Buchstaben in 101 ms, gemischte Stile auf der Grundlinie, zentrierter Text. Gruppe um 300 px verschoben → Drehen 10 ms, Shuffle 13 ms, Restore exakt an der neuen Stelle.
 
-**Phase 2 – Live-Bearbeitung**
-- Regler → sofort auf dem Canvas, erstes Bewegen teilt den Text auf. Öffnen oder Auswählen allein ändert nichts.
-- Shuffle-Button, Restore-Button, Done.
-- Undo-Verhalten wie im anderen Plugin (ein Schritt pro losgelassenem Regler).
-- Erkennt bei Auswahl: normaler Text, eigene Crack-Font-Gruppe (Regler zeigen gespeicherte Werte), etwas anderes. Relaunch-Button an der Gruppe („Crack Font“).
+**Phase 2 – Live-Bearbeitung ✅ umgesetzt und in Figma getestet**
+- Kein Apply mehr: Der erste Regler-Schritt teilt den Text auf, jeder weitere dreht nur. Öffnen oder Auswählen allein ändert nichts.
+- Wie bei Font Axis Gradient: UI schickt höchstens eine Nachricht pro Frame (16 ms), das Plugin schreibt immer nur einmal gleichzeitig und behält nur den neuesten Wert (`requestLive` / `liveNext`). Auch während des Aufteilens (bis 0,6 s) gehen keine Werte durcheinander.
+- Undo: kein `commitUndo` pro Schritt. Abgeschlossen wird bei Ebenenwechsel, vor und nach Shuffle, bei Restore und Done. Dass das Plugin danach die neue Gruppe selbst auswählt, zählt nicht als Ebenenwechsel. Erwartung wie im anderen Plugin: ⌘Z springt pro losgelassenem Regler zurück.
+- Shuffle auf normalem Text teilt ihn direkt auf. Restore wählt danach wieder die Textebene aus. Done schließt das Plugin.
+- **Gradzahl eintippen** über das Zahlenfeld von `fig-slider`, Grenze **45°** (UI und Plugin begrenzen beide; 270 → 45 im Browser geprüft).
+- UI bereits mit FigUI3 und den Grundstilen aus Font Axis Gradient (Auswahl-Zeile mit T-Symbol, `fig-field`-Zeilen, `fig-footer`: Restore · Shuffle · Done, Fensterhöhe passt sich an, localStorage-Ersatz für das Plugin-iframe).
+- Fix nach erstem Test (Regler gesperrt, „Select a text layer“ blieb stehen): Die UI hat nur Nachrichten mit `event.source === parent` angenommen. In Figma Desktop kommen Plugin-Nachrichten aber nicht von dort. In Phase 1 fiel das nicht auf, weil die Buttons immer aktiv waren. Jetzt wie bei Font Axis Gradient: kein Absender-Filter, „ready“ wird wiederholt, bis das Plugin antwortet, und das Plugin schickt die Auswahl auch direkt beim Start.
+- Tests: 32 grün (neu: Zusammenfassen schneller Regler-Schritte, nichts ändert sich beim Öffnen/Auswählen, 45°-Grenze, Undo-Schritte, Shuffle auf Text, Done).
 
 **Phase 3 – UI mit FigUI3**
 - Kompakte Zeile mit der Auswahl („T Headline · 12 letters“), Regler „Left“ / „Right“ mit Zahlenfeld, Footer einzeilig: Restore · Shuffle · Done.

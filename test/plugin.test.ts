@@ -117,16 +117,20 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
   }
 
   const page = new Node('PAGE') as Node & { selection: Node[] }
-  page.selection = []
+  let selection: Node[] = []
+  Object.defineProperty(page, 'selection', { get: () => selection, set: (v: Node[]) => { selection = v; queueMicrotask(() => handlers.selectionchange?.()) } })
   const other = new Text('x', [baseStyle(0)]); page.appendChild(other)
   const source = new Text(text, Array.from(text, (_, i) => baseStyle(i)))
   source.name = 'Headline'; source._rel = I(100, 200); page.appendChild(source)
-  page.selection = [source]
+  selection = [source]
   const figma: any = {
     currentPage: page,
     ui: { postMessage: (m: any) => messages.push(m) },
     showUI() {},
-    closePlugin() {},
+    closed: false,
+    commits: 0,
+    commitUndo() { this.commits++ },
+    closePlugin() { this.closed = true },
     on(event: string, cb: () => void) { handlers[event] = cb },
     async loadFontAsync(font: { family: string }) {
       fontLoads.push({ family: font.family, mutations })
@@ -144,12 +148,14 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
   math.random = () => draws.length ? draws.shift()! : 0.75
   vm.runInNewContext(code, { figma, __html__: '', Math: math, console: { error() {} } })
 
-  const send = async (type: string, left = 3, right = 3) => { await figma.ui.onmessage({ type, left, right }); return messages }
+  const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(r => setTimeout(r, 0)) }
+  const post = (type: string, left = 3, right = 3) => figma.ui.onmessage({ type, left, right })
+  const send = async (type: string, left = 3, right = 3) => { await post(type, left, right); await flush(); return messages }
   const groups = () => page.children.filter(n => n.type === 'GROUP')
   const letters = () => groups()[0].children.filter(c => c.visible) as Text[]
   const status = () => messages.filter(m => m.type === 'status').at(-1)
-  const select = (n: Node) => { page.selection = [n]; handlers.selectionchange?.() }
-  return { figma, page, source, other, messages, draws, fontLoads, send, groups, letters, status, select, Text, get mutations() { return mutations } }
+  const select = (n: Node) => { page.selection = [n] }
+  return { figma, page, source, other, messages, draws, fontLoads, send, post, flush, groups, letters, status, select, Text, get mutations() { return mutations } }
 }
 
 const near = (a: number, b: number, eps = 1e-6) => expect(Math.abs(a - b), `${a} vs ${b}`).toBeLessThan(eps)
@@ -160,7 +166,7 @@ const plain = (s: string) => s.split(ZW).join('')
 describe('split in place', () => {
   it('replaces the text with a letter group at the same position and keeps the original hidden inside', async () => {
     const h = harness()
-    await h.send('apply')
+    await h.send('live')
     expect(h.status().error).toBe(false)
     const [g] = h.groups()
     expect(h.page.children.indexOf(g)).toBe(1) // same layer position as the source
@@ -173,7 +179,7 @@ describe('split in place', () => {
 
   it('keeps kerning and every range style', async () => {
     const h = harness('AVA b', { styles: i => ({ fill: i * 10 }) })
-    await h.send('apply', 0, 0)
+    await h.send('live', 0, 0)
     const [a, v, a2, b] = h.letters()
     near(a.absoluteTransform[0][2], 100)
     near(v.absoluteTransform[0][2], 100 + 12 - 3) // A is 12 wide, AV kerned by −3
@@ -185,7 +191,7 @@ describe('split in place', () => {
 
   it('aligns mixed font sizes on the original line with zero-width struts', async () => {
     const h = harness('aB', { styles: i => (i === 1 ? { fontSize: 40 } : {}) })
-    await h.send('apply', 0, 0)
+    await h.send('live', 0, 0)
     const [a, b] = h.letters()
     expect(a.characters.includes(ZW)).toBe(true)
     expect(b.characters.includes(ZW)).toBe(false) // already the tallest style
@@ -196,13 +202,13 @@ describe('split in place', () => {
 
   it('loads every font before changing anything and changes nothing if a font is missing', async () => {
     const h = harness('Ab', { styles: i => ({ fontName: { family: i ? 'Serif' : 'Sans', style: 'Regular' } }) })
-    await h.send('apply')
+    await h.send('live')
     expect(h.fontLoads.map(f => f.family)).toEqual(['Sans', 'Serif'])
     expect(h.fontLoads.every(f => f.mutations === 0)).toBe(true)
 
     const bad = harness('Ab', { failFont: 'Sans' })
     const before = bad.page.children.length
-    await bad.send('apply')
+    await bad.send('live')
     expect(bad.status().error).toBe(true)
     expect(bad.mutations).toBe(0)
     expect(bad.page.children.length).toBe(before)
@@ -211,7 +217,7 @@ describe('split in place', () => {
   it('puts the original back if something fails half-way', async () => {
     const h = harness('Hello', { failOn: 'group' })
     const abs = h.source.absoluteTransform
-    await h.send('apply')
+    await h.send('live')
     expect(h.status().error).toBe(true)
     expect(h.groups()).toHaveLength(0)
     expect(h.page.children).toEqual([h.other, h.source])
@@ -222,14 +228,14 @@ describe('split in place', () => {
   it('rejects unsupported text without changing anything', async () => {
     for (const text of ['two\nlines', 'emoji 😀', '   ', 'x'.repeat(201)]) {
       const h = harness(text)
-      await h.send('apply')
+      await h.send('live')
       expect(h.status().error, text).toBe(true)
       expect(h.mutations, text).toBe(0)
     }
     const fixed = harness('Fixed'); fixed.source.textAutoResize = 'HEIGHT'
-    await fixed.send('apply'); expect(fixed.mutations).toBe(0)
+    await fixed.send('live'); expect(fixed.mutations).toBe(0)
     const locked = harness('Locked'); locked.source.locked = true
-    await locked.send('apply'); expect(locked.mutations).toBe(0)
+    await locked.send('live'); expect(locked.mutations).toBe(0)
   })
 })
 
@@ -237,19 +243,19 @@ describe('rotation', () => {
   it('stays within −right … +left and maps seeds to angles', async () => {
     const h = harness('ABC')
     h.draws.push(1 - Number.EPSILON, 0.5, 0) // seeds ≈ 1, 0, −1
-    await h.send('apply', 5, 8)
+    await h.send('live', 5, 8)
     const angles = h.letters().map(angle)
     near(angles[0], 5, 1e-4); near(angles[1], 0); near(angles[2], -8)
   })
 
   it('sliders scale the same pattern, letters turn around their own centre', async () => {
     const h = harness('Crack')
-    await h.send('apply', 0, 0)
+    await h.send('live', 0, 0)
     const centers = h.letters().map(center)
     const ids = h.letters().map(l => l.id)
-    await h.send('apply', 2, 2)
+    await h.send('live', 2, 2)
     const a = h.letters().map(angle)
-    await h.send('apply', 4, 4)
+    await h.send('live', 4, 4)
     const b = h.letters().map(angle)
     a.forEach((v, i) => near(b[i], v * 2))
     h.letters().forEach((l, i) => { near(center(l)[0], centers[i][0]); near(center(l)[1], centers[i][1]) })
@@ -260,7 +266,7 @@ describe('rotation', () => {
   it('shuffle draws a new pattern on the same letters', async () => {
     const h = harness('ABC')
     h.draws.push(0.9, 0.9, 0.9)
-    await h.send('apply', 6, 6)
+    await h.send('live', 6, 6)
     h.draws.push(0.1, 0.1, 0.1)
     await h.send('shuffle', 6, 6)
     h.letters().forEach(l => expect(angle(l)).toBeLessThan(0))
@@ -269,18 +275,18 @@ describe('rotation', () => {
 
   it('works after the group was moved and when a letter is selected', async () => {
     const h = harness('Move')
-    await h.send('apply', 0, 0)
+    await h.send('live', 0, 0)
     for (const c of h.groups()[0].children) { c._rel[0][2] += 50; c._rel[1][2] += 20 } // drag the group
     const centers = h.letters().map(center)
     h.select(h.letters()[1])
-    await h.send('apply', 10, 10)
+    await h.send('live', 10, 10)
     h.letters().forEach((l, i) => { near(center(l)[0], centers[i][0]); near(center(l)[1], centers[i][1]) })
     expect(h.groups()).toHaveLength(1)
   })
 
   it('skips deleted letters', async () => {
     const h = harness('Gone')
-    await h.send('apply')
+    await h.send('live')
     h.letters()[1].remove()
     await h.send('shuffle')
     expect(h.status()?.error ?? false).toBe(false)
@@ -288,8 +294,8 @@ describe('rotation', () => {
 
   it('reports the saved values when a Crack Font group is selected', async () => {
     const h = harness('Saved')
-    await h.send('apply', 4, 7)
-    h.select(h.groups()[0])
+    await h.send('live', 4, 7)
+    h.select(h.groups()[0]); await h.flush()
     expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'crack', left: 4, right: 7, name: 'Saved' })
   })
 })
@@ -298,7 +304,7 @@ describe('restore', () => {
   it('turns the letters back into the original text layer', async () => {
     const h = harness('Undo me')
     const abs = h.source.absoluteTransform
-    await h.send('apply', 9, 9)
+    await h.send('live', 9, 9)
     await h.send('restore')
     expect(h.groups()).toHaveLength(0)
     expect(h.page.children).toEqual([h.other, h.source])
@@ -310,7 +316,7 @@ describe('restore', () => {
 
   it('follows the group when it was moved, even with deleted letters', async () => {
     const h = harness('Move')
-    await h.send('apply')
+    await h.send('live')
     for (const c of h.groups()[0].children) { c._rel[0][2] += 50 }
     h.letters()[0].remove()
     await h.send('restore')
@@ -325,10 +331,69 @@ describe('restore', () => {
   })
 })
 
+describe('live editing', () => {
+  it('the first slider move splits, later moves only rotate; only the newest value is applied', async () => {
+    const h = harness('Live')
+    h.post('live', 1, 1); h.post('live', 2, 2); h.post('live', 9, 9); h.post('live', 4, 7)
+    await h.flush()
+    expect(h.groups()).toHaveLength(1)
+    h.select(h.groups()[0]); await h.flush()
+    expect(h.messages.filter(m => m.type === 'selection').at(-1)).toMatchObject({ kind: 'crack', left: 4, right: 7 })
+  })
+
+  it('opening and selecting change nothing', async () => {
+    const h = harness('Calm')
+    await h.send('ready')
+    h.select(h.source); await h.flush()
+    expect(h.mutations).toBe(0)
+    expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'text', name: 'Calm' })
+  })
+
+  it('angles above 45° are capped', async () => {
+    const h = harness('AB')
+    h.draws.push(1 - Number.EPSILON, 0)
+    await h.send('live', 270, 270)
+    const angles = h.letters().map(angle)
+    near(angles[0], 45, 1e-4); near(angles[1], -45)
+  })
+
+  it('slider steps are one undo step; switching layers, Shuffle and Restore close it', async () => {
+    const h = harness('Undo')
+    await h.send('live', 2, 2)
+    expect(h.page.selection).toEqual(h.groups())
+    await h.send('live', 5, 5)
+    await h.send('live', 6, 6)
+    expect(h.figma.commits).toBe(0) // selecting our own new group did not commit
+    h.select(h.other); await h.flush()
+    expect(h.figma.commits).toBe(1)
+    h.select(h.groups()[0]); await h.flush()
+    await h.send('live', 3, 3)
+    await h.send('shuffle') // closes the slider step, then the shuffle is its own step
+    expect(h.figma.commits).toBe(3)
+    await h.send('restore')
+    expect(h.figma.commits).toBe(4)
+    expect(h.page.selection).toEqual([h.source])
+  })
+
+  it('Shuffle on plain text splits it right away', async () => {
+    const h = harness('Fresh')
+    await h.send('shuffle')
+    expect(h.groups()).toHaveLength(1)
+  })
+
+  it('Done closes the plugin after the last change', async () => {
+    const h = harness('Bye')
+    await h.send('live')
+    await h.send('done')
+    expect(h.figma.closed).toBe(true)
+    expect(h.figma.commits).toBe(1)
+  })
+})
+
 describe('plugin boundary', () => {
-  it('overlapping clicks create only one group', async () => {
+  it('overlapping moves create only one group', async () => {
     const h = harness('Twice')
-    await Promise.all([h.send('apply'), h.send('apply')])
+    await Promise.all([h.send('live'), h.send('live')])
     expect(h.groups()).toHaveLength(1)
   })
 

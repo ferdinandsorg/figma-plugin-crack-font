@@ -2,29 +2,60 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <!-- Interim UI for phase 1. Replaced by the FigUI3 live UI in phases 2–3. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // Figma plugin iframes may block localStorage; FigUI3 reads it, so provide an in-memory stand-in.
+    try { window.localStorage.getItem('x') } catch (e) {
+      const store = new Map()
+      Object.defineProperty(window, 'localStorage', { configurable: true, value: {
+        getItem: k => store.has(String(k)) ? store.get(String(k)) : null,
+        setItem: (k,v) => store.set(String(k),String(v)), removeItem: k => store.delete(String(k)),
+        clear: () => store.clear(), key: i => Array.from(store.keys())[i] ?? null, get length() { return store.size }
+      } })
+    }
+  </script>
+  <!-- Phase 2: functional live UI with FigUI3 (same base styles as Font Axis Gradient). Polish follows in phase 3. -->
   <style>
-    body { margin: 0; padding: 12px 16px; font: 11px/16px Inter, system-ui, sans-serif; background: var(--figma-color-bg); color: var(--figma-color-text); }
-    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .row label { width: 40px; }
-    .row input { flex: 1; }
-    .row output { width: 32px; text-align: right; }
-    .buttons { display: flex; gap: 8px; margin-top: 12px; }
-    #selection { color: var(--figma-color-text-secondary); margin-bottom: 12px; }
-    #status { margin-top: 12px; min-height: 32px; }
-    #status.error { color: var(--figma-color-text-danger); }
+    :root {
+      --ring:var(--figma-color-border-selected, #0d99ff);
+      --font-family:Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --body-medium-fontSize:12px;
+      --body-medium-lineHeight:20px;
+      --body-small-fontSize:12px;
+      --body-small-lineHeight:18px;
+      --body-medium-strong-fontWeight:600;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; padding:0; height:auto; min-height:0; background:var(--figma-color-bg); color:var(--figma-color-text); font:var(--body-medium-fontSize)/var(--body-medium-lineHeight) var(--font-family); }
+    .selection-bar { display:flex; align-items:center; gap:8px; min-height:40px; padding:8px 16px; border-bottom:1px solid var(--figma-color-border); }
+    .selection-bar svg { flex:none; color:var(--figma-color-icon-secondary); }
+    #selection { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #selection.error { white-space:normal; color:var(--figma-color-text-danger); }
+    .settings-section { padding:12px 0; display:grid; gap:8px; }
+    .field-row { min-height:32px; display:grid; align-items:center; }
+    .field-row fig-slider { align-self:center; }
+    #status { padding:0 16px 8px; min-height:26px; font-size:12px; line-height:18px; color:var(--figma-color-text-secondary); }
+    #status:empty { display:none; }
+    #status.error { color:var(--figma-color-text-danger); }
+    fig-footer .spacer { flex:1; }
   </style>
 </head>
 <body>
-  <div id="selection">Select a text layer.</div>
-  <div class="row"><label for="left">Left</label><input id="left" type="range" min="0" max="15" step="0.5" value="3"><output id="left-value">3°</output></div>
-  <div class="row"><label for="right">Right</label><input id="right" type="range" min="0" max="15" step="0.5" value="3"><output id="right-value">3°</output></div>
-  <div class="buttons">
-    <fig-button id="restore" variant="secondary">Restore</fig-button>
-    <fig-button id="shuffle" variant="secondary">Shuffle</fig-button>
-    <fig-button id="apply" variant="primary">Apply</fig-button>
+  <div class="selection-bar">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 3h10v2.5h-1V4H8.5v8H10v1H6v-1h1.5V4H4v1.5H3z"/></svg>
+    <span id="selection">Select a text layer.</span>
   </div>
+  <section class="settings-section" aria-label="Rotation">
+    <div class="field-row"><fig-field columns="2/5"><label for="left">Left</label><fig-slider id="left" value="3" min="0" max="45" step="0.5" text="true" units="°" full></fig-slider></fig-field></div>
+    <div class="field-row"><fig-field columns="2/5"><label for="right">Right</label><fig-slider id="right" value="3" min="0" max="45" step="0.5" text="true" units="°" full></fig-slider></fig-field></div>
+  </section>
   <div id="status" role="status" aria-live="polite"></div>
+  <fig-footer>
+    <fig-button id="restore" variant="secondary" title="Turn the letters back into the original text layer">Restore</fig-button>
+    <span class="spacer"></span>
+    <fig-button id="shuffle" variant="secondary" title="New random rotation">Shuffle</fig-button>
+    <fig-button id="done" title="Finish editing and close">Done</fig-button>
+  </fig-footer>
   <!-- UI_SCRIPT -->
 </body>
 </html>

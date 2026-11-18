@@ -1,12 +1,9 @@
-// Plugin sandbox: selection handling and messages. Live editing and undo grouping follow in phase 2.
+// Plugin sandbox: selection handling, live editing on the canvas, undo grouping.
 import { findCrack, rotate, restore, shuffle, split, validateSource, UserError, type Crack } from './crack'
 import { clampAngle } from './rotate'
 
 type Message = { type?: string; left?: unknown; right?: unknown }
 type Target = { kind: 'crack'; crack: Crack } | { kind: 'text'; node: TextNode } | { kind: 'none'; error: string }
-
-const DEFAULTS = { left: 3, right: 3 }
-let busy = false
 
 function target(): Target {
   const selection = figma.currentPage.selection
@@ -36,43 +33,147 @@ function status(message: string, error = false): void {
   figma.ui.postMessage({ type: 'status', message, error })
 }
 
-async function handle(msg: Message): Promise<void> {
-  const t = target()
-  if (msg.type === 'restore') {
-    if (t.kind !== 'crack') return status('Select a Crack Font group to restore.', true)
-    const original = restore(t.crack)
-    figma.currentPage.selection = [original]
-    return status('Original text restored.')
-  }
-  const left = clampAngle(msg.left ?? DEFAULTS.left), right = clampAngle(msg.right ?? DEFAULTS.right)
-  if (left === null || right === null) return status('Rotation must be a number.', true)
-  if (t.kind === 'none') return status(t.error, true)
-  if (t.kind === 'text') {
-    const crack = await split(t.node, left, right)
-    figma.currentPage.selection = [crack.group]
-    return status(`${crack.data.letters.length} letters. Restore turns them back into one text layer.`)
-  }
-  t.crack.data.left = left
-  t.crack.data.right = right
-  if (msg.type === 'shuffle') shuffle(t.crack)
-  else rotate(t.crack)
+function report(error: unknown): void {
+  status(error instanceof UserError ? error.message : 'Could not update the text. Nothing was changed.', true)
+  if (!(error instanceof UserError)) console.error(error)
 }
 
-figma.showUI(__html__, { width: 300, height: 260, themeColors: true })
-figma.on('selectionchange', () => { if (!busy) postSelection() })
-figma.ui.onmessage = async (msg: Message) => {
-  if (!msg || typeof msg !== 'object') return
-  if (msg.type === 'ready') { postSelection(); return }
-  if (msg.type === 'close') { if (!busy) figma.closePlugin(); return }
-  if (msg.type !== 'apply' && msg.type !== 'shuffle' && msg.type !== 'restore') return
+function angles(msg: Message): { left: number; right: number } | null {
+  const left = clampAngle(msg.left), right = clampAngle(msg.right)
+  return left === null || right === null ? null : { left, right }
+}
+
+// ---------- undo grouping ----------
+// Live changes are not committed per slider step. Figma closes an undo step when the user lets go;
+// we additionally close it on selection changes, Shuffle, Restore and Done.
+let dirty = false
+function commit(): void {
+  if (!dirty) return
+  dirty = false
+  figma.commitUndo()
+}
+
+// Selecting the new letter group ourselves must not look like the user switching layers.
+let ownSelection: string | null = null
+function select(node: SceneNode): void {
+  ownSelection = node.id
+  figma.currentPage.selection = [node]
+}
+
+/** Splits the selected text on first use, otherwise returns the selected Crack Font group. */
+async function crackFor(t: Target, left: number, right: number): Promise<Crack | null> {
+  if (t.kind === 'none') { status(t.error, true); return null }
+  if (t.kind === 'crack') return t.crack
+  const crack = await split(t.node, left, right)
+  select(crack.group)
+  postSelection()
+  status(`${crack.data.letters.length} letters. Restore turns them back into one text layer.`)
+  return crack
+}
+
+// ---------- live editing ----------
+// At most one write at a time; while one runs, only the newest request is kept.
+let liveRunning = false
+let liveNext: Message | null = null
+let busy = false // Shuffle / Restore / Done in progress
+
+function requestLive(msg: Message): void {
+  if (liveRunning) { liveNext = msg; return }
+  liveRunning = true
+  applyLive(msg).catch(report).finally(() => {
+    liveRunning = false
+    const next = liveNext
+    liveNext = null
+    if (next && !busy) requestLive(next)
+  })
+}
+
+async function waitForLive(): Promise<void> {
+  liveNext = null
+  while (liveRunning) await new Promise<void>(resolve => setTimeout(resolve, 10))
+}
+
+async function applyLive(msg: Message): Promise<void> {
+  const a = angles(msg)
+  if (!a) return
+  const t = target()
+  const wasText = t.kind === 'text'
+  const crack = await crackFor(t, a.left, a.right)
+  if (!crack) return
+  if (!wasText) {
+    crack.data.left = a.left
+    crack.data.right = a.right
+    rotate(crack)
+  }
+  dirty = true
+}
+
+async function runShuffle(msg: Message): Promise<void> {
+  const a = angles(msg)
+  if (!a) return
+  commit()
+  const t = target()
+  const crack = await crackFor(t, a.left, a.right) // a fresh split already has new seeds
+  if (!crack) return
+  if (t.kind === 'crack') {
+    crack.data.left = a.left
+    crack.data.right = a.right
+    shuffle(crack)
+  }
+  dirty = true
+  commit()
+}
+
+function runRestore(): void {
+  const t = target()
+  if (t.kind !== 'crack') { status('Select a Crack Font group to restore.', true); return }
+  const original = restore(t.crack)
+  dirty = true
+  commit()
+  select(original)
+  postSelection()
+  status('Original text restored.')
+}
+
+async function exclusive(task: () => Promise<void> | void): Promise<void> {
   if (busy) return
   busy = true
-  try { await handle(msg) }
-  catch (error) {
-    status(error instanceof UserError ? error.message : 'Could not update the text. Nothing was changed.', true)
-    if (!(error instanceof UserError)) console.error(error)
-  } finally {
+  figma.ui.postMessage({ type: 'busy', busy: true })
+  try {
+    await waitForLive()
+    await task()
+  } catch (error) { report(error) }
+  finally {
     busy = false
-    postSelection()
+    figma.ui.postMessage({ type: 'busy', busy: false })
   }
 }
+
+figma.showUI(__html__, { width: 280, height: 220, themeColors: true })
+
+figma.on('selectionchange', () => {
+  const selection = figma.currentPage.selection
+  if (ownSelection && selection.length === 1 && selection[0].id === ownSelection) { ownSelection = null; return }
+  ownSelection = null
+  commit()
+  if (!busy) postSelection()
+})
+
+figma.ui.onmessage = async (msg: Message) => {
+  if (!msg || typeof msg !== 'object') return
+  switch (msg.type) {
+    case 'ready': postSelection(); return
+    case 'resize': {
+      const h = (msg as { height?: unknown }).height
+      if (typeof h === 'number' && Number.isFinite(h)) figma.ui.resize(280, Math.max(120, Math.min(600, Math.round(h))))
+      return
+    }
+    case 'live': if (!busy) requestLive(msg); return
+    case 'shuffle': await exclusive(() => runShuffle(msg)); return
+    case 'restore': await exclusive(runRestore); return
+    case 'done': await exclusive(() => { commit(); figma.closePlugin() }); return
+  }
+}
+
+// Tell the UI about the current selection right away; Figma delivers it once the UI has loaded.
+postSelection()

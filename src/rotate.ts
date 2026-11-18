@@ -2,7 +2,7 @@
 
 export type Matrix = [[number, number, number], [number, number, number]]
 
-export const MAX_ANGLE = 15
+export const MAX_ANGLE = 45
 
 /** One random value per letter in [-1, 1). The pattern stays fixed while the sliders only scale it. */
 export function newSeeds(count: number, random: () => number = Math.random): number[] {
