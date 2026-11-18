@@ -16,9 +16,10 @@ const mul = (a: M, b: M): M => [
   [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1], a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2]],
 ]
 const ZW = '​'
+const inv = (m: M): M => { const d = m[0][0] * m[1][1] - m[0][1] * m[1][0], a = m[1][1] / d, b = -m[0][1] / d, c = -m[1][0] / d, e = m[0][0] / d; return [[a, b, -(a * m[0][2] + b * m[1][2])], [c, e, -(c * m[0][2] + e * m[1][2])]] }
 type Style = { fontName: { family: string; style: string }; fontSize: number; lineHeight: { unit: string }; textDecoration: string; fill: number }
 
-function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>; failFont?: string; failOn?: string } = {}) {
+function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>; failFont?: string; failOn?: string; parent?: 'page' | 'frame' | 'auto' | 'group' | 'instance'; opacity?: number } = {}) {
   let nextId = 0, mutations = 0
   const fontLoads: { family: string; mutations: number }[] = []
   const messages: any[] = []
@@ -29,7 +30,13 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
   class Node {
     id = String(++nextId); parent: Node | null = null; children: Node[] = []
     locked = false; visible = true; removed = false; name = ''; data: Record<string, string> = {}
+    opacity = 1; layoutMode = 'NONE'; _positioning = 'AUTO'
     _rel: M = I()
+    get layoutPositioning() { return this._positioning }
+    set layoutPositioning(v: string) {
+      if (v === 'ABSOLUTE' && (!this.parent || this.parent.layoutMode === 'NONE')) throw new Error('Can only set layoutPositioning = ABSOLUTE if the parent node has layoutMode !== NONE')
+      this._positioning = v
+    }
     constructor(public type: string) {}
     get container(): Node | null { let p = this.parent; while (p && p.type === 'GROUP') p = p.parent; return p }
     get absoluteTransform(): M {
@@ -56,7 +63,7 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
       const abs = node.type === 'GROUP' ? null : node.absoluteTransform
       if (node.parent) node.parent.children.splice(node.parent.children.indexOf(node), 1)
       node.parent = this; this.children.splice(index, 0, node)
-      if (abs) { const c = node.container; const inv = c && c.type !== 'PAGE' ? c.absoluteTransform : I(); node._rel = [[abs[0][0], abs[0][1], abs[0][2] - inv[0][2]], [abs[1][0], abs[1][1], abs[1][2] - inv[1][2]]] }
+      if (abs) { const c = node.container; node._rel = mul(inv(c && c.type !== 'PAGE' ? c.absoluteTransform : I()), abs) } // keeps the on-screen position
     }
     appendChild(node: Node) { this.insertChild(this.children.length, node) }
     getPluginData(k: string) { return this.data[k] || '' }
@@ -85,8 +92,9 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
     get height() { return Math.max(...this.styles.map(s => s.fontSize * 1.2)) }
     clone() {
       touch('clone')
-      const t = new Text(this.characters, copy(this.styles)); t._rel = copy(this._rel); t.name = this.name
-      this.parent!.insertChild(this.parent!.children.indexOf(this) + 1, t); return t
+      // Like Figma: a clone lands on the current page, keeping its relative transform values.
+      const t = new Text(this.characters, copy(this.styles)); t.name = this.name; t.opacity = this.opacity
+      page.children.push(t); t.parent = page; t._rel = copy(this._rel); return t
     }
     deleteCharacters(a: number, b: number) { touch('delete'); this.characters = this.characters.slice(0, a) + this.characters.slice(b); this.styles.splice(a, b - a) }
     insertCharacters(at: number, chars: string, use: 'BEFORE' | 'AFTER') {
@@ -121,7 +129,16 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
   Object.defineProperty(page, 'selection', { get: () => selection, set: (v: Node[]) => { selection = v; queueMicrotask(() => handlers.selectionchange?.()) } })
   const other = new Text('x', [baseStyle(0)]); page.appendChild(other)
   const source = new Text(text, Array.from(text, (_, i) => baseStyle(i)))
-  source.name = 'Headline'; source._rel = I(100, 200); page.appendChild(source)
+  source.name = 'Headline'; source._rel = I(100, 200); source.opacity = opts.opacity ?? 1
+  let holder: Node = page
+  if (opts.parent && opts.parent !== 'page') {
+    holder = new Node(opts.parent === 'group' ? 'GROUP' : opts.parent === 'instance' ? 'INSTANCE' : 'FRAME')
+    if (opts.parent === 'auto') holder.layoutMode = 'VERTICAL'
+    holder._rel = [[0.8, 0.6, 400], [-0.6, 0.8, 300]] // a rotated frame, to exercise the matrices
+    page.appendChild(holder)
+    const before = new Text('above', [baseStyle(0)]); holder.appendChild(before)
+  }
+  holder.appendChild(source)
   selection = [source]
   const figma: any = {
     currentPage: page,
@@ -151,11 +168,11 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
   const flush = async () => { for (let i = 0; i < 30; i++) await new Promise(r => setTimeout(r, 0)) }
   const post = (type: string, left = 3, right = 3) => figma.ui.onmessage({ type, left, right })
   const send = async (type: string, left = 3, right = 3) => { await post(type, left, right); await flush(); return messages }
-  const groups = () => page.children.filter(n => n.type === 'GROUP')
+  const groups = () => (holder.type === 'GROUP' ? holder.children : holder.children).filter(n => n.type === 'GROUP' && n.data['crack-font-v2'])
   const letters = () => groups()[0].children.filter(c => c.visible) as Text[]
   const status = () => messages.filter(m => m.type === 'status').at(-1)
   const select = (n: Node) => { page.selection = [n] }
-  return { figma, page, source, other, messages, draws, fontLoads, send, post, flush, groups, letters, status, select, Text, get mutations() { return mutations } }
+  return { figma, page, holder, source, other, messages, draws, fontLoads, send, post, flush, groups, letters, status, select, Text, get mutations() { return mutations } }
 }
 
 const near = (a: number, b: number, eps = 1e-6) => expect(Math.abs(a - b), `${a} vs ${b}`).toBeLessThan(eps)
@@ -326,6 +343,59 @@ describe('restore', () => {
   it('needs a Crack Font group', async () => {
     const h = harness('Plain')
     await h.send('restore')
+    expect(h.status().error).toBe(true)
+    expect(h.mutations).toBe(0)
+  })
+})
+
+describe('text in frames, groups and auto layout', () => {
+  it('splits text inside a (rotated) frame in place and restores it', async () => {
+    const h = harness('Frame', { parent: 'frame' })
+    const abs = h.source.absoluteTransform
+    await h.send('live', 0, 0)
+    const [g] = h.groups()
+    expect(g.parent).toBe(h.holder)
+    expect(h.holder.children.indexOf(g)).toBe(1)
+    // straight letters sit on the original line: first letter starts where the text started
+    const first = h.letters()[0].absoluteTransform
+    near(first[0][2], abs[0][2]); near(first[1][2], abs[1][2]); near(first[0][0], abs[0][0])
+    expect(h.page.children.filter(n => n.type === 'TEXT')).toEqual([h.other]) // no stray clones on the page
+    await h.send('restore')
+    expect(h.source.parent).toBe(h.holder)
+    expect(h.source.absoluteTransform.flat().map(v => +v.toFixed(6))).toEqual(abs.flat().map(v => +v.toFixed(6)))
+  })
+
+  it('works inside a group', async () => {
+    const h = harness('Group', { parent: 'group' })
+    await h.send('live', 5, 5)
+    expect(h.groups()).toHaveLength(1)
+    expect(h.groups()[0].parent).toBe(h.holder)
+  })
+
+  it('in auto layout the original keeps its slot at opacity 0 and the letters float on top', async () => {
+    const h = harness('Auto', { parent: 'auto', opacity: 0.8 })
+    const abs = h.source.absoluteTransform
+    await h.send('live', 0, 0)
+    const [g] = h.groups()
+    expect(g.layoutPositioning).toBe('ABSOLUTE')
+    expect(h.source.parent).toBe(h.holder) // still in the flow
+    expect(h.holder.children.indexOf(h.source)).toBe(1)
+    expect(h.source.visible).toBe(true)
+    expect(h.source.opacity).toBe(0)
+    near(h.letters()[0].absoluteTransform[0][2], abs[0][2])
+    expect(h.letters()[0].opacity).toBe(0.8)
+    h.select(h.letters()[2]); await h.flush()
+    expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'crack' })
+    await h.send('restore')
+    expect(h.groups()).toHaveLength(0)
+    expect(h.source.opacity).toBe(0.8)
+    expect(h.source.locked).toBe(false)
+    expect(h.page.selection).toEqual([h.source])
+  })
+
+  it('text inside an instance is refused without changes', async () => {
+    const h = harness('Instance', { parent: 'instance' })
+    await h.send('live')
     expect(h.status().error).toBe(true)
     expect(h.mutations).toBe(0)
   })

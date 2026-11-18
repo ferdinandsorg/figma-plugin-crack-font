@@ -1,6 +1,9 @@
 // Split a text layer into letters in place, rotate them, and restore the original.
-// The original stays hidden and locked inside the letter group, so Restore is exact.
-import { angleFor, invert, multiply, needsLayer, newSeeds, rotateAround, translate, type Matrix } from './rotate'
+// The original is kept, so Restore is exact:
+// - 'inside': hidden and locked inside the letter group (page, frames, groups).
+// - 'placeholder': in auto layout the original stays in the flow at opacity 0 and keeps its space;
+//   the letter group sits on top of it, absolutely positioned. Nothing else in the layout moves.
+import { angleFor, invert, multiply, needsLayer, newSeeds, rotateAround, type Matrix } from './rotate'
 
 export const DATA_KEY = 'crack-font-v2'
 export const MAX_LETTERS = 200
@@ -8,7 +11,10 @@ const STRUT = '​' // zero-width space: gives a letter the line box of the whol
 
 /** Letter centre in the original text's own coordinate frame. */
 export type LetterData = { id: string; seed: number; cx: number; cy: number }
-export type CrackData = { version: 2; originalId: string; left: number; right: number; letters: LetterData[] }
+export type CrackData = {
+  version: 2; originalId: string; left: number; right: number; letters: LetterData[]
+  mode?: 'inside' | 'placeholder'; opacity?: number
+}
 export type Crack = { group: GroupNode; data: CrackData; original: TextNode }
 
 export class UserError extends Error {}
@@ -34,7 +40,8 @@ export function findCrack(node: SceneNode): Crack | null {
   if (!group) return null
   const data = readData(group)
   if (!data) return null
-  const original = group.children.find(c => c.id === data.originalId)
+  const siblings = data.mode === 'placeholder' ? group.parent?.children ?? [] : group.children
+  const original = siblings.find(c => c.id === data.originalId)
   if (!original || original.type !== 'TEXT') return null
   return { group, data, original }
 }
@@ -52,7 +59,9 @@ function assertEditable(node: SceneNode): void {
 
 export function validateSource(node: TextNode): void {
   assertEditable(node)
-  if (node.parent?.type !== 'PAGE') fail('Only top-level text is supported for now. Move the text out of frames and groups first.')
+  for (let n: BaseNode | null = node.parent; n && n.type !== 'PAGE'; n = n.parent) {
+    if (n.type === 'INSTANCE') fail('Text inside an instance cannot be split. Edit the main component or detach the instance.')
+  }
   const text = node.characters
   if (!text.trim()) fail('Select text with at least one visible letter.')
   if (text.length > MAX_LETTERS) fail(`Use at most ${MAX_LETTERS} characters, including spaces.`)
@@ -74,6 +83,12 @@ export async function loadFonts(node: TextNode): Promise<void> {
 }
 
 // ---------- geometry ----------
+
+/** Text that auto layout positions: replacing it would make the rest of the layout move. */
+function inFlow(node: TextNode): boolean {
+  const parent = node.parent
+  return !!parent && 'layoutMode' in parent && parent.layoutMode !== 'NONE' && node.layoutPositioning !== 'ABSOLUTE'
+}
 
 /** Child transforms of a group are relative to the nearest non-group ancestor, not the group. */
 function containerTransform(node: BaseNode): Matrix {
@@ -115,15 +130,14 @@ function addStruts(letter: TextNode, styles: LineStyle[], own: string): void {
 
 export async function split(source: TextNode, left: number, right: number): Promise<Crack> {
   validateSource(source)
-  const before = source.characters
+  const before = { characters: source.characters, opacity: source.opacity }
   await loadFonts(source)
-  if (source.removed || source.characters !== before) fail('The text changed while fonts were loading. Please try again.')
+  if (source.removed || source.characters !== before.characters) fail('The text changed while fonts were loading. Please try again.')
   validateSource(source)
 
   const text = source.characters, n = text.length
   const parent = source.parent as BaseNode & ChildrenMixin
   const index = parent.children.indexOf(source)
-  const base = source.relativeTransform as Matrix
   const created: SceneNode[] = []
   let group: GroupNode | null = null
   try {
@@ -153,21 +167,29 @@ export async function split(source: TextNode, left: number, right: number): Prom
       const width = letter.width
       if (styles.length && Math.abs(letter.height - height) > 0.01) addStruts(letter, styles, styleKey(source, i))
       // The letter ends where its prefix ends, so kerning with the previous letter is kept.
+      // (Clones land on the page; rotate() below puts every letter in place.)
       const x = space ? prefix[i] : prefix[i + 1] - width
-      letter.relativeTransform = multiply(base, translate(x, 0))
       letter.name = space ? 'Space' : text[i]
       letters.push(letter)
       data.push({ id: letter.id, seed: 0, cx: x + letter.width / 2, cy: letter.height / 2 })
     }
     if (!letters.length) fail('Select text with at least one visible letter.')
 
-    group = figma.group([...letters, source], parent, index)
-    group.name = `Crack Font – ${text.length > 40 ? text.slice(0, 40) + '…' : text}`
-    source.visible = false
+    const placeholder = inFlow(source)
+    const opacity = source.opacity
+    if (placeholder) {
+      group = figma.group(letters, parent, index + 1)
+      group.layoutPositioning = 'ABSOLUTE'
+      source.opacity = 0
+    } else {
+      group = figma.group([...letters, source], parent, index)
+      source.visible = false
+    }
     source.locked = true
+    group.name = `Crack Font – ${text.length > 40 ? text.slice(0, 40) + '…' : text}`
     const seeds = newSeeds(data.length)
     data.forEach((l, i) => { l.seed = seeds[i] })
-    const crack: Crack = { group, original: source, data: { version: 2, originalId: source.id, left, right, letters: data } }
+    const crack: Crack = { group, original: source, data: { version: 2, originalId: source.id, left, right, letters: data, mode: placeholder ? 'placeholder' : 'inside', opacity } }
     rotate(crack)
     return crack
   } catch (error) {
@@ -176,6 +198,7 @@ export async function split(source: TextNode, left: number, right: number): Prom
       if (source.parent !== parent) parent.insertChild(Math.min(index, parent.children.length), source)
       source.locked = false
       source.visible = true
+      source.opacity = before.opacity
     }
     for (const node of created) if (!node.removed) node.remove()
     if (group && !group.removed) group.remove()
@@ -206,13 +229,17 @@ export function shuffle(crack: Crack): void {
 
 // ---------- restore ----------
 
-/** Puts the original text back where the group is and removes the letters. */
-export function restore({ group, original }: Crack): TextNode {
+/** Puts the original text back (where the group is, or in its layout slot) and removes the letters. */
+export function restore({ group, original, data }: Crack): TextNode {
   assertEditable(group)
-  const parent = group.parent as BaseNode & ChildrenMixin
   original.locked = false
-  original.visible = true
-  parent.insertChild(parent.children.indexOf(group), original)
+  if (data.mode === 'placeholder') {
+    original.opacity = data.opacity ?? 1
+  } else {
+    const parent = group.parent as BaseNode & ChildrenMixin
+    original.visible = true
+    parent.insertChild(parent.children.indexOf(group), original)
+  }
   group.remove()
   return original
 }

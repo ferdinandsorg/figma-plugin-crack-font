@@ -109,7 +109,17 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
 - Fix nach erstem Test (Regler gesperrt, „Select a text layer“ blieb stehen): Die UI hat nur Nachrichten mit `event.source === parent` angenommen. In Figma Desktop kommen Plugin-Nachrichten aber nicht von dort. In Phase 1 fiel das nicht auf, weil die Buttons immer aktiv waren. Jetzt wie bei Font Axis Gradient: kein Absender-Filter, „ready“ wird wiederholt, bis das Plugin antwortet, und das Plugin schickt die Auswahl auch direkt beim Start.
 - Tests: 32 grün (neu: Zusammenfassen schneller Regler-Schritte, nichts ändert sich beim Öffnen/Auswählen, 45°-Grenze, Undo-Schritte, Shuffle auf Text, Done).
 
-**Phase 3 – UI mit FigUI3**
+**Phase 3 – UI mit FigUI3 ✅ umgesetzt und in Figma getestet**
+- **Fächer** statt zwei Reglern (`src/ui/fan.ts`): ein Halbkreis, der Keil zeigt den Bereich von „nach links“ bis „nach rechts“. Links oder rechts der Mitte ziehen setzt die jeweilige Seite (ganze Grad), über die Mitte gezogen geht die Seite auf 0. Gezeichnet mit doppeltem Winkel (45° = waagerecht), damit kleine Werte sichtbar bleiben. In der Mitte ein „A“ gerade plus zwei blasse „A“ in den echten Grenzwinkeln. Griffe per Tab erreichbar, Pfeiltasten ±1°, Shift ±5°.
+- Darunter **Tilt left / Tilt right** als `fig-input-number` (0–45°, 0,5er-Schritte, Eingaben darüber → 45°) und dazwischen ein **Verknüpfen-Button**: gleiche Gradzahl auf beiden Seiten.
+- Auswahl-Zeile: Text-Symbol, bei einer Crack-Font-Gruppe leicht schräg. Fehler in Rot, mehrzeilig. Ohne Auswahl ist der Fächer ausgegraut.
+- Hinweis bei normalem Text: „Drag the fan or type an angle. The text splits into letters on the first change.“ Danach Statusmeldungen des Plugins.
+- Footer: Restore · Shuffle (mit Symbol) · Done. Light und Dark über Figmas Tokens geprüft.
+- Tests: 34 grün (neu: Geometrie des Fächers).
+- Feedback-Runde 1 (2026-11-18), umgesetzt:
+  - **Griffe greifen zuverlässiger:** Ein Klick bis 16 px um einen Griff nimmt diesen Griff, egal auf welcher Seite der Mitte. Beispiel: links 45°, rechts 0° (Griff oben) → ein Klick knapp links neben dem oberen Griff bewegt den rechten, nicht mehr den linken. Liegen beide Griffe übereinander (beide nahe 0°), entscheidet die Seite. Griffe etwas größer (r 7).
+  - **Pfeiltasten in den Zahlenfeldern in ganzen Grad** (16 → 17 → 18). 16,5 lässt sich weiterhin eintippen.
+  - **Text in Frames, Gruppen und Auto-Layout** (siehe Phase 4, vorgezogen).
 - Kompakte Zeile mit der Auswahl („T Headline · 12 letters“), Regler „Left“ / „Right“ mit Zahlenfeld, Footer einzeilig: Restore · Shuffle · Done.
 - Dark/Light, Statusmeldungen, Fensterhöhe automatisch.
 - Iteration mit dir nach Test in Figma.
@@ -118,7 +128,13 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
   - **Coolere Interaktion** als die zwei Regler, z. B. ein Bogen/Fächer, der den Bereich links ↔ rechts zeigt und an dem man beide Enden zieht. Ideen in Phase 3 zeigen, sonst später.
 
 **Phase 4 – Feinschliff & Fehlerfälle**
-- Grenzen prüfen und ggf. lockern (z. B. Text in Frames ohne Auto-Layout, zentrierter Text), Zeichenlimit nach Messung.
+- ✅ (vorgezogen) **Text in Frames, Gruppen und Auto-Layout**:
+  - Frames/Gruppen/Sections/Components: Buchstaben-Gruppe an der Stelle des Texts im selben Elternteil, Original unsichtbar darin (wie auf der Seite).
+  - **Auto-Layout**: Das Original bleibt an seinem Platz im Layout, mit Deckkraft 0 und gesperrt, und hält so den Platz frei. Die Buchstaben-Gruppe liegt direkt darüber, absolut positioniert (`layoutPositioning = ABSOLUTE`). Frame-Höhe und alle anderen Elemente bleiben, wo sie sind. Restore setzt die ursprüngliche Deckkraft zurück und löscht die Gruppe. Verschiebt das Layout den Text später (z. B. anderes Padding), springen die Buchstaben bei der nächsten Änderung mit.
+  - Text in Instanzen wird abgelehnt (Instanzen erlauben keine neuen Ebenen): „Edit the main component or detach the instance.“
+  - In Figma per MCP mit dem echten Code geprüft (Testfälle „08 Frame“, neu „09 Auto layout“): Positionen exakt, Layout unverändert, Restore exakt.
+  - Erkenntnis: `clone()` legt die Kopie immer auf der Seite ab, nicht im Frame. Die Positionen setzt deshalb erst `rotate()` nach dem Gruppieren.
+- Zentrierter und rechtsbündiger Text funktioniert schon (seit Phase 1). Zeichenlimit 200 bleibt.
 - Gemischte Schriften, fehlende Schrift, gesperrte Ebenen, geänderte Buchstaben (Restore trotzdem möglich?).
 - Alte Gruppen aus Version 1 (24 px darunter, ohne Restore): weiter shuffeln können, Restore dort nicht anbieten.
 - README neu, Name im Manifest „Crack Font“.
