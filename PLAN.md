@@ -83,11 +83,21 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
   4. Live-Rotation: Zeit pro Regler-Schritt bei 200 Buchstaben.
 - Ergebnis kommt in diesen Plan, danach Entscheidung über Restore-Variante und Zeichenlimit.
 
-**Phase 1 – Kern: Aufteilen an Ort und Stelle, Rotation, Restore**
-- `src/split.ts`: Text → Buchstaben-Gruppe an der Stelle des Originals (gleiches Elternteil, gleiche Ebenen-Position), Original sichern (Variante aus Phase 0).
-- `src/rotate.ts` (rein, testbar): Seeds, Winkel aus links/rechts, Drehung um die Buchstabenmitte.
-- `src/restore.ts`: Gruppe → ursprüngliche Textebene.
-- Speicherformat `crack-font-v2` (Seeds, links/rechts, Original-Infos). Unit-Tests.
+**Phase 1 – Kern: Aufteilen an Ort und Stelle, Rotation, Restore ✅ umgesetzt (Test im Plugin offen)**
+- `src/rotate.ts` (rein, ohne Figma-API): Seeds `[-1, 1)`, `angleFor(seed, left, right)` (positiv = gegen den Uhrzeigersinn = nach links, wie Figmas Rotation), Drehung um die Buchstabenmitte, 2×3-Matrizen.
+- `src/crack.ts`: `split` · `rotate` · `shuffle` · `restore` · `findCrack`.
+  - Aufteilen an Ort und Stelle: Gruppe an der Ebenen-Position des Originals, Original unsichtbar + gesperrt darin. Positionen über Präfix-Breiten (Kerning bleibt), Strut bei gemischten Zeilenhöhen.
+  - **Leerzeichen bekommen keine eigene Ebene** (weniger Ebenen, schneller), außer sie sind unterstrichen/durchgestrichen.
+  - Buchstabenmitten werden im Koordinatensystem des Originals gespeichert. Die Rotation rechnet über das Original zurück. So stimmt alles auch nach dem Verschieben der Gruppe. Wichtig: In Figma sind Kinder einer Gruppe relativ zum nächsten Frame/zur Seite positioniert, nicht zur Gruppe. Der alte Code hatte das falsch angenommen.
+  - Gelöschte Buchstaben werden beim Drehen übersprungen, Restore geht trotzdem.
+  - Bei einem Fehler mitten im Aufteilen kommt das Original unverändert zurück, alles Neue wird gelöscht.
+  - Speicherformat `crack-font-v2`: `{ originalId, left, right, letters: [{ id, seed, cx, cy }] }`.
+  - Auswahl eines einzelnen Buchstabens zählt wie die Auswahl der Gruppe.
+- `src/code.ts`: Nachrichten `apply` / `shuffle` / `restore`, Auswahl-Info ans UI (Text / Crack-Font-Gruppe mit gespeicherten Werten / nichts).
+- Übergangs-UI: Regler Left/Right (0–15°), Buttons Restore / Shuffle / Apply. Live-Bearbeitung und FigUI3-Gestaltung folgen in Phase 2/3.
+- Grenzen schon gelockert, weil sie technisch nicht mehr nötig sind: Ausrichtung (zentriert/rechts) und gedrehte Textebenen. Weiterhin: nur oberste Ebene, Auto width, eine Zeile, 200 Zeichen, Latin-1.
+- Tests (`npm test`, vitest): 9 Unit-Tests für die Mathematik, 17 Tests mit Figma-Mock auf dem gebauten `dist/code.js` (Mock bildet Figmas Gruppen-Koordinaten, versteckte Kinder und Leerzeichen-Breite nach).
+- In Figma per MCP mit dem echten Code geprüft: Headline 9 Buchstaben in 125 ms, Kerning-Beispiel 16 Buchstaben in 101 ms, gemischte Stile auf der Grundlinie, zentrierter Text. Gruppe um 300 px verschoben → Drehen 10 ms, Shuffle 13 ms, Restore exakt an der neuen Stelle.
 
 **Phase 2 – Live-Bearbeitung**
 - Regler → sofort auf dem Canvas, erstes Bewegen teilt den Text auf. Öffnen oder Auswählen allein ändert nichts.
@@ -99,12 +109,16 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
 - Kompakte Zeile mit der Auswahl („T Headline · 12 letters“), Regler „Left“ / „Right“ mit Zahlenfeld, Footer einzeilig: Restore · Shuffle · Done.
 - Dark/Light, Statusmeldungen, Fensterhöhe automatisch.
 - Iteration mit dir nach Test in Figma.
+- Feedback nach Phase 1 (2026-11-18):
+  - **Gradzahl direkt eingeben** (Zahlenfeld neben dem Regler). Grenze **45°**: Darüber stehen die Buchstaben fast quer und überlappen, das sieht nicht mehr nach „Crack“ aus. Eingaben darüber werden auf 45° gesetzt. Der Regler deckt 0–45° ab. (Zahlenfeld kommt mit `fig-slider text` schon in Phase 2.)
+  - **Coolere Interaktion** als die zwei Regler, z. B. ein Bogen/Fächer, der den Bereich links ↔ rechts zeigt und an dem man beide Enden zieht. Ideen in Phase 3 zeigen, sonst später.
 
 **Phase 4 – Feinschliff & Fehlerfälle**
 - Grenzen prüfen und ggf. lockern (z. B. Text in Frames ohne Auto-Layout, zentrierter Text), Zeichenlimit nach Messung.
 - Gemischte Schriften, fehlende Schrift, gesperrte Ebenen, geänderte Buchstaben (Restore trotzdem möglich?).
 - Alte Gruppen aus Version 1 (24 px darunter, ohne Restore): weiter shuffeln können, Restore dort nicht anbieten.
 - README neu, Name im Manifest „Crack Font“.
+- Version 2.0: `package.json` steht auf 2.0.0. Das Feld `"api": "1.0.0"` im Manifest ist die **Version der Figma-Plugin-API**, nicht die des Plugins, und muss so bleiben. Die Versionsnummer des Plugins vergibt Figma beim Veröffentlichen; dort in den Release-Notes „2.0“ angeben.
 
 **Phase 5 – Community-Assets (zum Schluss)**
 - Icon, Cover, Carousel in einer Figma-Datei entwerfen (wie beim anderen Plugin: erst Entwurf, dann gemeinsam auf einen Stil einigen), exportieren nach `assets/community/`.

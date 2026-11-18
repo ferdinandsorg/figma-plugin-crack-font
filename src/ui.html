@@ -2,33 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Interim UI for phase 1. Replaced by the FigUI3 live UI in phases 2–3. -->
   <style>
-    :root { color-scheme: light dark; }
-    * { box-sizing: border-box; }
-    body { margin: 0; padding: 20px; font: 12px/1.5 system-ui, sans-serif; background: var(--figma-color-bg, #fff); color: var(--figma-color-text, #222); }
-    h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.5px; }
-    p { margin: 0 0 16px; }
-    label { display: flex; justify-content: space-between; font-weight: 600; }
-    input { width: 100%; margin: 12px 0 16px; accent-color: #635bff; }
-    .buttons { display: flex; gap: 8px; }
-    button { flex: 1; padding: 9px; border: 1px solid var(--figma-color-border, #bbb); border-radius: 6px; font: inherit; font-weight: 600; color: inherit; background: var(--figma-color-bg-secondary, #eee); cursor: pointer; }
-    #apply { color: #fff; background: #554bdb; border-color: #554bdb; }
-    button:focus-visible, input:focus-visible { outline: 2px solid #8b83ff; outline-offset: 3px; }
-    button:disabled { opacity: .5; cursor: wait; }
-    #status { margin-top: 14px; min-height: 54px; overflow-wrap: anywhere; }
-    #status.error { color: var(--figma-color-text-danger, #b42318); }
-    small { display: block; margin-top: 10px; }
+    body { margin: 0; padding: 12px 16px; font: 11px/16px Inter, system-ui, sans-serif; background: var(--figma-color-bg); color: var(--figma-color-text); }
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .row label { width: 40px; }
+    .row input { flex: 1; }
+    .row output { width: 32px; text-align: right; }
+    .buttons { display: flex; gap: 8px; margin-top: 12px; }
+    #selection { color: var(--figma-color-text-secondary); margin-bottom: 12px; }
+    #status { margin-top: 12px; min-height: 32px; }
+    #status.error { color: var(--figma-color-text-danger); }
   </style>
 </head>
 <body>
-  <h1>Crack Font</h1>
-  <p>Give editable letters a little disorder.<br>Your original stays visible and unchanged.</p>
-  <label for="strength">Rotation strength <output id="value" for="strength">+/-2 degrees</output></label>
-  <input id="strength" type="range" min="0" max="15" step="0.5" value="2">
-  <div class="buttons"><button id="apply">Apply</button><button id="reroll">Reroll</button></div>
-  <div id="status" role="status" aria-live="polite">Select top-level, single-line text with Auto width. The effect appears below it.</div>
-  <small>Up to 200 characters. ASCII and precomposed Latin-1 only.</small>
+  <div id="selection">Select a text layer.</div>
+  <div class="row"><label for="left">Left</label><input id="left" type="range" min="0" max="15" step="0.5" value="3"><output id="left-value">3°</output></div>
+  <div class="row"><label for="right">Right</label><input id="right" type="range" min="0" max="15" step="0.5" value="3"><output id="right-value">3°</output></div>
+  <div class="buttons">
+    <fig-button id="restore" variant="secondary">Restore</fig-button>
+    <fig-button id="shuffle" variant="secondary">Shuffle</fig-button>
+    <fig-button id="apply" variant="primary">Apply</fig-button>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
   <!-- UI_SCRIPT -->
 </body>
 </html>
