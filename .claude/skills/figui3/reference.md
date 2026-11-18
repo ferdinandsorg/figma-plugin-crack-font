@@ -1,0 +1,172 @@
+# FigUI3 core API reference
+
+Public API: `node_modules/@rogieking/figui3/README.md`. React recipes: [components.md](components.md).
+
+## Color utilities
+
+Import pure color math from `@rogieking/figui3/fig-color.js`.
+
+- RGB channels: `0–255`; HSL/HSV percentages: `0–100`; OKLab/OKLCH lightness: `0–1`; hue: normalized degrees.
+- Supports sRGB and true Display-P3 conversion, OKLab distance, hue interpolation, gamut testing, and OKLCH chroma-reduction gamut mapping.
+- Achromatic OKLCH colors use hue `0`.
+
+## Option string formats
+
+
+- Comma-separated: `Left,Center,Right`
+- Newline-delimited
+- JSON array: `["Left","Center"]` or `[{"value":"left","label":"Left"}]`
+
+## Shared input defaults
+
+- Property-compatible controls expose parsed `.default` / `.defaultValue` aliases, `.isDefault`, and `.resetToDefault()`.
+- Scalar inputs use `default`; checkbox/switch use `default-checked`; file uses `default-url` and `default-filename`.
+- Reset is a disabled-safe no-op when already default. Otherwise it follows the normal value path and emits `input`, then `change`.
+- Missing authored defaults resolve by type: numeric `0` (clamped), empty text/file/palette, unchecked boolean, `#D9D9D9` color, and built-in gradient/easing values.
+
+## `fig-button`
+
+- `variant`: `""` (primary), `secondary`, `property`, `destructive`, `destructiveSecondary`, `destructiveGhost`, `destructiveLink`, `ghost`, `link`, `input`, `overlay`
+- `type`: `button`, `toggle`, `submit`, `select`, `upload`
+- `size`: `""`, `large`
+- `selected`, `disabled`, `pill` (presence; `"false"` disables)
+- `icon`: boolean or `"compact"`; compact icon buttons use content width with no inline padding
+- Label content: author `slot="label"` for reliable single-line ellipsis; a direct `<label>` child is styled equivalently without its DOM being mutated
+- `variant="property"` shares secondary styling and adds full-width, start-aligned layout
+- Property icons use authored `slot="prepend"` content; consumers manage the popup/dialog
+
+## `fig-button-play`
+
+- `playing`, `disabled` (presence; `"false"` disables)
+- `duration`: internal timer duration in seconds; default `5`
+- `progress`: controlled fraction from `0` to `1`; presence disables the internal timer
+- `variant`: forwarded to the inner `fig-button`; default `secondary`
+- `size`: forwarded to the inner `fig-button`
+- Methods: `play()`, `pause()`, `toggle()`, `reset()`
+- Events: `play`, `pause`, `complete`
+
+## `fig-input-text`
+
+- `type`: `text`, `email`, `password`, `search`, `url`
+- `size`: `""`, `large` (32px tall)
+- `value`, `placeholder`, `multiline`, `autoresize`, `resizable`, `disabled`, `readonly`, `full`
+- Adornments: `slot="prepend"` and `slot="append"`
+
+## `fig-input-number`
+
+- `size`: `""`, `large` (32px tall)
+- `variant`: `""`, `ghost`
+- `value`, `placeholder`, `min`, `max`, `step`, `precision`, `units`, `units-disallow`, `steppers`, `tabular`, `disabled`, `full`
+- Adornments: `slot="prepend"` and `slot="append"`
+
+## `fig-angle`
+
+- `value`, `default`, `precision` (defaults: deg/grad `0`, rad `2`, turn `3`), `dial`, optional `min`/`max`, `step` (defaults: deg/° `1`, rad `0.01`, turn `0.001`, grad `0.1`), `rotations`, `disabled`, `full`
+- `defaultValue`: resolved numeric default; values are otherwise unbounded
+- `units`: `deg` (default; `°` alias), `rad`, `turn`, or `grad`. Degree units display as `°` in the number field.
+- Changing `units` converts `value`, `default`, `min`, `max`, and `step`.
+- Shared surface focus outline for dial/input focus and dragging; dial Arrow keys use `step`, Shift-drag/dial Shift+Arrow move by 15°, and the number input retains built-in Up/Down, Shift×10, and Alt-drag scrubbing
+- An inset reset button appears when `value` differs from `default`
+- Events: `input` while editing; `change` on commit; detail `{ value, angle, units }`, rounded to `precision` while stored values remain high precision
+- Static `rotationIcon(angle, size)` returns the centered SVG arc/arrow swept from zero to the signed angle; `size` defaults to `48`.
+
+## `fig-dropdown`
+
+- `value`, `type="select|dropdown"`, `variant="ghost"`, `size="large"` (32px), `full`, `disabled`
+- Children: native `<option>` / `<optgroup>`
+
+## `fig-slider`
+
+- `type`: `range` (default), `opacity`, `hue`, `stepper`, `delta`
+- `text` default true; `text="false"` hides the number field
+- Always set `min`, `max`, `step`; `units` when displayed
+- `transform` when internal scale ≠ UI scale
+- `variant="classic"` for the older appearance
+- Valid explicit `default` values add a tick and native snap target for range, opacity, and hue; inferred defaults do not
+- Opacity: set `color` and usually `units="%"`
+- Delta: include `default` and typically symmetric min/max
+- Stepper: include a `<datalist>` of stops
+
+## `fig-field`
+
+- `direction="horizontal|vertical"`
+- `label` or a child `<label>`
+- `slot="leading"` places an accessory before the label
+- `slot="trailing"` places an end action in the input area
+
+## `fig-toolbelt`
+
+- Attrs: `value`, `disabled`, `layout="horizontal|vertical"`, `overflow="buttons|scrollbar"`; role `toolbar`
+- `fig-toolbelt-item` is optional: valued `fig-button` descendants are independently selectable and navigable, including buttons in groups, tooltips, and `fig-button-combo`
+- Use `fig-toolbelt-item` to make custom content one selectable item; nested buttons belong to the wrapper and are not counted separately
+- A button inside `fig-menu` is that menu's trigger and is not counted as a tool
+- Items and direct buttons: `value`, `selected`, `disabled`; groups wrap related controls and use role `group`
+- ArrowLeft/ArrowRight navigate horizontal layouts; ArrowUp/ArrowDown navigate vertical layouts; Home/End move roving focus; Enter/Space select
+- Events: bubbling `input` and `change` with the selected value
+- `overflow="scrollbar"` is the default and uses buttonless scrolling with the scrollbar hidden; `overflow="buttons"` adds direction-aware paging controls
+- Internal `part="viewport"` owns scrolling and fades; authored items remain direct light-DOM children
+- `slot="prepend"` and `slot="append"` keep authored items, groups, or custom content fixed outside the viewport; slotted items remain in selection and roving keyboard order
+
+## `.fig-overflow-fade`
+
+- Apply the class to a vertical scroll container and constrain its height; add `fig-overflow-fade-horizontal` for horizontal scrolling.
+- Fade size: `--fig-overflow-fade-size` (default `var(--spacer-5)`).
+- Sticky-header clearance: `--fig-overflow-fade-clear-top` (default `0px`).
+- Horizontal start clearance: `--fig-overflow-fade-clear-left` (default `0px`).
+- Direction-aware fades require self scroll timeline support; unsupported browsers scroll normally without a mask.
+
+## `fig-popup` vs `fig-dialog`
+
+Dialog: `modal`, `drag`, `resizable`, `autoresize`, `handle`, `closedby="any|closerequest|none"`, `position` (viewport: `top left` … `bottom right`).
+
+Popup: `anchor` (selector or element), `position` (side or corner), `offset="8 8"`, `viewport-margin`, `theme="default|light|dark|menu"`, `variant="popover|tooltip"`.
+
+Toast: `theme`, `duration`, `offset`, `dismiss`, `live="polite|assertive"`, `icon`. Method: `showToast()`.
+
+## `fig-menu`
+
+- Trigger: child with `fig-menu-trigger` (auto `slot="trigger"`), or `trigger="contextmenu"`
+- `position`, `offset`, `closedby="auto|any|none"`, `open`
+- Items stay in light DOM and slot into the popup (do not relocate)
+- Items: `fig-menu-item` (`value`, `disabled`, `subtle`). Also a list row outside `fig-menu` (popup, sticky separators, nested row `fig-menu`).
+- Dividers: `fig-separator` / `fig-menu-separator` (`label`, `sticky`)
+- Popup uses `popover="manual"` (top layer) and stays in the menu shadow so slots keep working
+
+## Color / fill values
+
+`fig-input-color` events: `{ color, alpha, opacity }` aliases (opaque `#RRGGBB`, `0–1`, `0–100`) plus legacy `value` / `hex` / `rgba`.
+
+`fig-input-fill` value JSON:
+
+```json
+{"type":"solid","color":"#FF5733","opacity":100}
+{"type":"gradient","gradient":{}}
+{"type":"image","image":{"url":"...","scaleMode":"fill"}}
+```
+
+Without `fig-fill-picker`, fill/color render a preview. With the picker registered, click opens the editor dialog.
+
+## Media
+
+- Surface lives in `fig-preview`
+- `fig-audio`: `src`, `autoplay`, `controls`, `muted`, `loop`; composes waveform and shared controls
+- `fig-image` / `fig-video`: `upload`, `fit`, `aspect-ratio`, `checkerboard`, `loading-indicator`
+- `fig-carousel`: direct media children; `index`, `playing`, `autoplay`, `duration`, `loop`, `navigation="buttons|dots"`, `progress`; child `carousel-duration` override; methods `previous()`, `next()`, `goTo(index)`, `first()`, `last()`, `restart()`, `play()`, `pause()`, `toggle()`
+- Video controls render **below** the preview, not as an overlay
+- Carousel controls render at the bottom-right in previous, next, play/pause order
+- Slotted image overlays stay in light DOM
+
+## `fig-layer` (core registration, standalone styles)
+
+```js
+import "@rogieking/figui3/fig-layer.css";
+```
+
+`fig.js` registers the element. The standalone `fig-layer.js` entry can be
+used when Core is not otherwise loaded. Attrs: `open`, `visible`, `disabled`.
+Markup: child `.fig-layer-row` plus nested `fig-layer`. Events: `openchange`,
+`visibilitychange`.
+
+## Native elements
+
+Styled native `button`, `select`, `input`, `textarea`, `checkbox`, `.switch`, `radio`, `color`, `progress`, `fieldset`, `details`, `hr` when a custom element is unnecessary.

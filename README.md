@@ -24,17 +24,22 @@ Delete the effect group to start over or discard it. There is no hidden original
 
 ## Build and Test
 
-Requires Node.js 22+ and pnpm. Versions of TypeScript and the public Figma typings are pinned in `package.json` and `package-lock.json`.
+Requires Node.js 22+. Roadmap: [PLAN.md](PLAN.md).
 
 ```sh
-pnpm install --ignore-scripts
-pnpm build
-pnpm test
+npm install
+npm run build      # dist/code.js + dist/ui.html
+npm run watch      # rebuild on change
+npm run typecheck
+npm test
 ```
 
-`code.ts` compiles to the checked-in `code.js`. The standalone UI is `ui.html`; no UI framework or internal Figma package is needed. The legacy repository tracks `node_modules`; this change leaves those tracked files untouched. Use a clean toolchain installed from the lockfile rather than the old checked-in dependencies. Do not include installed dependency changes when uploading the upgrade.
+In Figma Desktop: **Plugins → Development → Import plugin from manifest…** → `manifest.json`. Console: **Plugins → Development → Show/Hide console**. Test file: https://www.figma.com/design/UsrT5bOvoav6SWTCUWUuEk
 
-Tests execute the actual compiled plugin in a Node VM with a mock Figma API, including group-bounds normalization during child rotation. They cover rotation bounds, center stability, repeated Apply/Reroll, persisted group metadata, original preservation, mixed styles, font preflight/failure, cleanup and rollback, unsupported Unicode/layouts, selection errors, bounded work and overlapping clicks. These are not live Figma integration tests; real font shaping, clone slicing and host undo behavior still need manual checks in Figma.
+- `src/code.ts` – plugin logic (sandbox)
+- `src/ui.html` + `src/ui/main.ts` – UI, bundled with FigUI3 into `dist/ui.html`
+- `scripts/build.mjs` – esbuild build
+- `.claude/skills/figui3`, `.claude/skills/propskit` – agent skills from `@rogieking/figui3` (MIT)
 
 ## Manual Figma Check and Publication
 

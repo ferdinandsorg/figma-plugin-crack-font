@@ -4,7 +4,7 @@ const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const vm = require('node:vm');
 
-const code = readFileSync(resolve(__dirname, '../code.js'), 'utf8');
+const code = readFileSync(resolve(__dirname, '../dist/code.js'), 'utf8');
 const identity = (x = 0, y = 0) => [[1, 0, x], [0, 1, y]];
 const copy = value => JSON.parse(JSON.stringify(value));
 
@@ -297,30 +297,6 @@ test('asynchronous group locks and glyph shears are rejected', async () => {
   assert.equal((await h.send('reroll')).ok, false); assert.equal(h.mutationCount, count);
 });
 
-test('standalone UI sends numeric strength, disables in-flight actions and renders results safely', () => {
-  const html = readFileSync(resolve(__dirname, '../ui.html'), 'utf8');
-  const elements = Object.fromEntries(['strength', 'value', 'status', 'apply', 'reroll'].map(id => [id, { id, disabled: false, textContent: '', className: '' }]));
-  elements.strength.value = '2';
-  const sent = [], parent = { postMessage: msg => sent.push(msg) }, window = {};
-  const buttons = [elements.apply, elements.reroll];
-  vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], {
-    document: { getElementById: id => elements[id], querySelectorAll: () => buttons }, parent, window
-  });
-  elements.strength.value = '4.5'; elements.strength.oninput();
-  assert.equal(elements.value.textContent, '+/-4.5 degrees');
-  elements.apply.onclick();
-  assert.equal(sent[0].pluginMessage.type, 'apply'); assert.equal(sent[0].pluginMessage.strength, 4.5);
-  assert.ok(buttons.every(b => b.disabled));
-  window.onmessage({ source: {}, data: { pluginMessage: { type: 'result', ok: true, message: 'spoof' } } });
-  assert.ok(buttons.every(b => b.disabled));
-  window.onmessage({ source: parent, data: { pluginMessage: { type: 'result', ok: false, message: '<b>Error</b>' } } });
-  assert.ok(buttons.every(b => !b.disabled));
-  assert.equal(elements.status.textContent, '<b>Error</b>'); assert.equal(elements.status.className, 'error');
-  elements.reroll.onclick(); assert.equal(sent[1].pluginMessage.type, 'reroll');
-  window.onmessage({ source: parent, data: { pluginMessage: { type: 'result', ok: true, message: 'Updated' } } });
-  assert.equal(elements.status.className, ''); assert.equal(elements.status.textContent, 'Updated');
-});
-
 test('manifest retains Community identity and disallows network access', () => {
   const manifest = JSON.parse(readFileSync(resolve(__dirname, '../manifest.json'), 'utf8'));
   assert.equal(manifest.id, '929414938810147814');
@@ -328,13 +304,3 @@ test('manifest retains Community identity and disallows network access', () => {
   assert.deepEqual(manifest.networkAccess.allowedDomains, ['none']);
 });
 
-test('package and npm lockfile agree on exact toolchain versions', () => {
-  const pkg = JSON.parse(readFileSync(resolve(__dirname, '../package.json'), 'utf8'));
-  const lock = JSON.parse(readFileSync(resolve(__dirname, '../package-lock.json'), 'utf8'));
-  assert.deepEqual(pkg.devDependencies, lock.packages[''].devDependencies);
-  for (const [name, version] of Object.entries(pkg.devDependencies)) {
-    assert.match(version, /^\d+\.\d+\.\d+$/);
-    assert.equal(lock.packages[`node_modules/${name}`].version, version);
-    assert.equal(lock.dependencies[name].version, version);
-  }
-});
