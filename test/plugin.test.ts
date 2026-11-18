@@ -480,9 +480,9 @@ describe('edge cases', () => {
     expect(h.mutations).toBe(before)
   })
 
-  it('groups made by Crack Font 1 can be rotated, shuffled and removed', async () => {
+  it('groups made by older Crack Font versions can be rotated, shuffled and removed', async () => {
     const h = harness('Old')
-    // a v1 group: letters 24 px below the untouched original, rotated by ±4°
+    // an old group: letters 24 px below the untouched original, rotated by ±4°
     const angles = [4, -2, -4]
     const letters = [...'Old'].map((ch, i) => {
       const l = new h.Text(ch, [copyStyle(h.source.styles[i])])

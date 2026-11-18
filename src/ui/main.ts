@@ -100,7 +100,7 @@ function renderStatus(): void {
 function hintFor(s: Selection): string {
   if (s.kind === 'none') return 'Select a single-line text layer to crack its letters.'
   if (s.kind === 'text') return 'Drag the fan or type an angle. The text splits into letters on the first change.'
-  if (s.legacy) return 'From Crack Font 1. Restore removes these letters; the original is untouched.'
+  if (s.legacy) return 'Made with an older Crack Font. Restore removes these letters; the original is untouched.'
   return 'Drag the fan or Shuffle for a new pattern. Restore brings back the text layer.'
 }
 

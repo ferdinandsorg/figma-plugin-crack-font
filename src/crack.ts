@@ -3,7 +3,7 @@
 // - 'inside': hidden and locked inside the letter group (page, frames, groups).
 // - 'placeholder': in auto layout the original stays in the flow at opacity 0 and keeps its space;
 //   the letter group sits on top of it, absolutely positioned. Nothing else in the layout moves.
-// - 'legacy': a group made by Crack Font 1 (letters 24 px below an untouched original). It can be
+// - 'legacy': a group made by an older Crack Font (1 or 2: letters 24 px below an untouched original). It can be
 //   rotated and shuffled; Restore just removes the letters.
 import { angleFor, invert, multiply, needsLayer, newSeeds, rotateAround, type Matrix } from './rotate'
 
@@ -44,7 +44,7 @@ function rotationOf(node: SceneNode): number {
   return Math.atan2(m[0][1], m[0][0]) * 180 / Math.PI
 }
 
-/** A Crack Font 1 group → v2 data in 'legacy' mode. Current angles become the seeds. */
+/** A group from an older Crack Font (data key crack-font-v1) → v2 data in 'legacy' mode. Current angles become the seeds. */
 function fromV1(group: GroupNode): CrackData | null {
   let v1: { version?: number; sourceId?: string; glyphs?: { id: string; dx: number; dy: number }[] }
   try { v1 = JSON.parse(group.getPluginData(V1_KEY)) } catch (_) { return null }

@@ -150,10 +150,14 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
 - Tests: 46 grün.
 - Version 2.0: `package.json` steht auf 2.0.0. Das Feld `"api": "1.0.0"` im Manifest ist die **Version der Figma-Plugin-API**, nicht die des Plugins, und muss so bleiben. Die Versionsnummer des Plugins vergibt Figma beim Veröffentlichen; dort in den Release-Notes „2.0“ angeben.
 
-**Phase 5 – Community-Assets (zum Schluss)**
-- Icon, Cover, Carousel in einer Figma-Datei entwerfen (wie beim anderen Plugin: erst Entwurf, dann gemeinsam auf einen Stil einigen), exportieren nach `assets/community/`.
-- Listing-Texte (Tagline, Beschreibung, Kategorie, Tags) in `docs/community-listing.md`.
-- Neue Version über Figmas Publish-Flow mit der bestehenden ID veröffentlichen (machst du).
+**Phase 5 – Community-Assets ✅ erledigt**
+- Vorlage: alte Assets (Seite „Community Assets“, Section „Version 1“) und dein Versuch „Version 2“ mit Allo Variable. Übernommen: Farben Grün #00DE81, Pink #FF1D6E, Gelb #FEE92F, Blau #4F60FF, Schwarz; Formen mit schwarzer Kontur (Stern, Sonne, Pille, Dreieck, Raute, Kreis); Noise (dasselbe Bild, gekachelt, 6–10 %).
+- Neu: kein Raster mit Kopf- und Fußleiste mehr, sondern freie, große Formen, die angeschnitten und überlappend liegen. Große gekippte Headlines (jeder Buchstabe einzeln gedreht, Kerning über Präfix-Breiten wie im Plugin), Labels als Pillen mit Kontur.
+- **Schrift:** Allo Variable ist über die Figma-Anbindung nicht verfügbar (lokale Schrift). Platzhalter: Google Sans Flex mit ROND 100 / wght 1000, für Zahlen Google Sans Code. Tausch über Text → Replace fonts.
+- Vorschlag in der Section „Version 3 – Vorschlag“: Cover („Crack your type.“), Carousel 1 „Set the range.“ (Fächer wie im Plugin, Left 30° / Right 18°, drei „A“ in den Grenzwinkeln), Carousel 2 „Shuffle till it clicks.“ (dreimal „Funky“ in drei Mustern), Carousel 3 „Change your mind?“ (gekipptes „Groovy“ → gerades „Groovy“, Chips Frames / Groups / Auto layout), drei Icon-Varianten (Aa, Cf, A) in Pink/Gelb.
+- Listing-Texte als Entwurf in `docs/community-listing.md`.
+- Von dir manuell überarbeitet und exportiert nach `assets/community/`: Icon „Aa“, Cover („Crack Font 3.0“), Carousel 1 (Fächer), Carousel 2 (Shuffle). Carousel 3 entfällt.
+- **Version 3:** Die Community-Version 2 war schon veröffentlicht, dieses Release ist Version 3. Code braucht dafür nichts (Figma nummeriert selbst). Angepasst: `package.json` 3.0.0, Listing „What's new in 3.0“, Hinweis bei alten Gruppen neutral („Made with an older Crack Font“), weil auch Gruppen aus der veröffentlichten Version 2 das alte Format haben.
 
 ## 5. Offene Entscheidungen
 

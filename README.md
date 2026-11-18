@@ -19,7 +19,7 @@ Easter egg: press any letter or digit while the plugin has focus and the fan sho
 - The original text is kept: hidden and locked inside the letter group, or in auto layout left in place at opacity 0 (it keeps its space, so nothing else moves) with the letters absolutely positioned on top.
 - Every letter gets one random seed. The angles only scale that pattern, so dragging never jumps around. Seeds and angles are stored on the group (`crack-font-v2` plugin data).
 - Spaces get no layer unless they are underlined or struck through.
-- Groups made by Crack Font 1 can still be tilted and shuffled; Restore removes their letters (their original was never changed).
+- Groups made by older versions (1 and 2) can still be tilted and shuffled; Restore removes their letters (their original was never changed).
 
 ## Limits
 
@@ -50,6 +50,10 @@ In Figma Desktop: **Plugins → Development → Import plugin from manifest…**
 - `test/` – unit tests and tests of the built plugin against a Figma mock
 - `.claude/skills/figui3`, `.claude/skills/propskit` – agent skills from `@rogieking/figui3` (MIT)
 
+## Community assets
+
+Icon, cover and carousel images for the Community page are in `assets/community/`, listing texts in [docs/community-listing.md](docs/community-listing.md). Source designs: test file → page "Community Assets".
+
 ## Publishing
 
-Publish through Figma (**Plugins → Development → Manage plugins**) with the existing ID and mention "2.0" in the release notes. The `"api": "1.0.0"` field in `manifest.json` is the Figma plugin API version, not the plugin version; leave it as is.
+`npm run build`, then in Figma Desktop **Plugins → Development → Manage plugins in development → Crack Font → Publish new version**, with the existing ID. Figma numbers versions itself; this release is version 3 in the Community. The `"api": "1.0.0"` field in `manifest.json` is the Figma plugin API version, not the plugin version; leave it as is.
