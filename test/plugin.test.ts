@@ -21,6 +21,7 @@ type Style = { fontName: { family: string; style: string }; fontSize: number; li
 
 function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>; failFont?: string; failOn?: string; parent?: 'page' | 'frame' | 'auto' | 'group' | 'instance'; opacity?: number } = {}) {
   let nextId = 0, mutations = 0
+  const all: any[] = []
   const fontLoads: { family: string; mutations: number }[] = []
   const messages: any[] = []
   const draws: number[] = []
@@ -32,12 +33,12 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
     locked = false; visible = true; removed = false; name = ''; data: Record<string, string> = {}
     opacity = 1; layoutMode = 'NONE'; _positioning = 'AUTO'
     _rel: M = I()
+    constructor(public type: string) { all.push(this) }
     get layoutPositioning() { return this._positioning }
     set layoutPositioning(v: string) {
       if (v === 'ABSOLUTE' && (!this.parent || this.parent.layoutMode === 'NONE')) throw new Error('Can only set layoutPositioning = ABSOLUTE if the parent node has layoutMode !== NONE')
       this._positioning = v
     }
-    constructor(public type: string) {}
     get container(): Node | null { let p = this.parent; while (p && p.type === 'GROUP') p = p.parent; return p }
     get absoluteTransform(): M {
       if (this.type === 'GROUP') { const b = this.bounds(); return I(b.x, b.y) }
@@ -149,6 +150,7 @@ function harness(text = 'AVA b', opts: { styles?: (i: number) => Partial<Style>;
     commitUndo() { this.commits++ },
     closePlugin() { this.closed = true },
     on(event: string, cb: () => void) { handlers[event] = cb },
+    async getNodeByIdAsync(id: string) { return all.find(n => n.id === id && !n.removed) ?? null },
     async loadFontAsync(font: { family: string }) {
       fontLoads.push({ family: font.family, mutations })
       if (font.family === opts.failFont) throw new Error('missing')
@@ -179,6 +181,7 @@ const near = (a: number, b: number, eps = 1e-6) => expect(Math.abs(a - b), `${a}
 const angle = (n: { absoluteTransform: M }) => Math.atan2(-n.absoluteTransform[1][0], n.absoluteTransform[0][0]) * 180 / Math.PI
 const center = (n: any) => { const t = n.absoluteTransform; return [t[0][0] * n.width / 2 + t[0][1] * n.height / 2 + t[0][2], t[1][0] * n.width / 2 + t[1][1] * n.height / 2 + t[1][2]] }
 const plain = (s: string) => s.split(ZW).join('')
+const copyStyle = <T>(v: T): T => JSON.parse(JSON.stringify(v))
 
 describe('split in place', () => {
   it('replaces the text with a letter group at the same position and keeps the original hidden inside', async () => {
@@ -393,11 +396,116 @@ describe('text in frames, groups and auto layout', () => {
     expect(h.page.selection).toEqual([h.source])
   })
 
+  it('auto layout: crack, restore, crack again keeps working', async () => {
+    const h = harness('Again', { parent: 'auto' })
+    await h.send('live', 4, 4)
+    await h.send('restore')
+    expect(h.page.selection).toEqual([h.source])
+    await h.send('live', 6, 6)
+    const [g] = h.groups()
+    h.select(g); await h.flush()
+    expect(h.messages.filter(m => m.type === 'selection').at(-1)).toMatchObject({ kind: 'crack', name: 'Again' })
+    await h.send('live', 9, 9)
+    expect(h.status()?.error ?? false).toBe(false)
+    await h.send('restore')
+    expect(h.groups()).toHaveLength(0)
+    expect(h.source.opacity).toBe(1)
+  })
+
+  it('a letter group dragged out of its auto layout frame still finds its original', async () => {
+    const h = harness('Moved', { parent: 'auto' })
+    await h.send('live', 0, 0)
+    const g = h.holder.children.find((c: any) => c.type === 'GROUP')
+    h.page.appendChild(g) // Figma reparents an absolutely positioned layer when it is dragged out
+    h.select(g); await h.flush()
+    expect(h.messages.filter(m => m.type === 'selection').at(-1)).toMatchObject({ kind: 'crack', name: 'Moved' })
+    await h.send('live', 7, 7)
+    expect(h.status()?.error ?? false).toBe(false)
+    await h.send('restore')
+    expect(g.removed).toBe(true)
+    expect(h.source.opacity).toBe(1)
+    expect(h.source.parent).toBe(h.holder)
+  })
+
   it('text inside an instance is refused without changes', async () => {
     const h = harness('Instance', { parent: 'instance' })
     await h.send('live')
     expect(h.status().error).toBe(true)
     expect(h.mutations).toBe(0)
+  })
+})
+
+describe('edge cases', () => {
+  it('a duplicated group keeps working and restores its own copy of the original', async () => {
+    const h = harness('Copy')
+    await h.send('live', 0, 0)
+    const [g] = h.groups()
+    // duplicate like Figma: same layers in the same order, new IDs, same plugin data
+    const kids = g.children.map((c: any) => { const k = c.clone(); k.visible = c.visible; k.locked = c.locked; return k })
+    const dup = h.figma.group(kids, h.page, h.page.children.length)
+    dup.data = { ...g.data }
+    for (const k of dup.children) k._rel[1][2] += 300
+    h.select(dup); await h.flush()
+    expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'crack', name: 'Copy' })
+    await h.send('live', 10, 10)
+    expect(dup.children.filter((c: any) => c.visible).some((l: any) => Math.abs(angle(l)) > 0.01)).toBe(true)
+    expect(g.children.filter((c: any) => c.visible).every((l: any) => Math.abs(angle(l)) < 1e-9)).toBe(true) // the first group is untouched
+    await h.send('restore')
+    expect(h.page.selection[0].characters).toBe('Copy')
+    expect(h.page.selection[0]).not.toBe(h.source)
+    near(h.page.selection[0].absoluteTransform[1][2], 500)
+  })
+
+  it('a group whose original was deleted says so instead of acting like plain layers', async () => {
+    const h = harness('Lost', { parent: 'auto' })
+    await h.send('live')
+    h.source.remove()
+    h.select(h.groups()[0]); await h.flush()
+    expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'none' })
+    expect(h.messages.at(-1).error).toMatch(/deleted/)
+  })
+
+  it('a locked group is not changed', async () => {
+    const h = harness('Lock')
+    await h.send('live')
+    const [g] = h.groups()
+    g.locked = true
+    h.select(g); await h.flush()
+    expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'crack' })
+    expect(h.messages.at(-1).error).toMatch(/Unlock/)
+    const before = h.mutations
+    await h.send('live', 20, 20)
+    await h.send('shuffle')
+    await h.send('restore')
+    expect(h.mutations).toBe(before)
+  })
+
+  it('groups made by Crack Font 1 can be rotated, shuffled and removed', async () => {
+    const h = harness('Old')
+    // a v1 group: letters 24 px below the untouched original, rotated by ±4°
+    const angles = [4, -2, -4]
+    const letters = [...'Old'].map((ch, i) => {
+      const l = new h.Text(ch, [copyStyle(h.source.styles[i])])
+      const w = l.width, ht = l.height, cx = 100 + 12 * i + w / 2, cy = 200 + 24 + 24 + ht / 2
+      const r = angles[i] * Math.PI / 180, c = Math.cos(r), sn = Math.sin(r)
+      l._rel = [[c, sn, cx - c * w / 2 - sn * ht / 2], [-sn, c, cy + sn * w / 2 - c * ht / 2]]
+      return l
+    })
+    const g = h.figma.group(letters, h.page, h.page.children.length)
+    const c0 = center(letters[0])
+    g.data['crack-font-v1'] = JSON.stringify({ version: 1, sourceId: h.source.id, glyphs: letters.map(l => { const c = center(l); return { id: l.id, text: l.characters, width: l.width, height: l.height, dx: c[0] - c0[0], dy: c[1] - c0[1] } }) })
+    const centers = letters.map(center)
+    h.select(g); await h.flush()
+    expect(h.messages.at(-1)).toMatchObject({ type: 'selection', kind: 'crack', legacy: true, left: 4, right: 4 })
+    await h.send('live', 8, 8)
+    letters.forEach((l, i) => { near(angle(l), angles[i] * 2, 1e-6); near(center(l)[0], centers[i][0]); near(center(l)[1], centers[i][1]) })
+    await h.send('shuffle', 8, 8)
+    letters.forEach((l, i) => { near(center(l)[0], centers[i][0]); near(center(l)[1], centers[i][1]) })
+    await h.send('restore')
+    expect(g.removed).toBe(true)
+    expect(h.source.visible).toBe(true)
+    expect(h.page.selection).toEqual([h.source])
+    expect(h.status().message).toMatch(/never changed/)
   })
 })
 

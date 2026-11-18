@@ -3,9 +3,12 @@
 // - 'inside': hidden and locked inside the letter group (page, frames, groups).
 // - 'placeholder': in auto layout the original stays in the flow at opacity 0 and keeps its space;
 //   the letter group sits on top of it, absolutely positioned. Nothing else in the layout moves.
+// - 'legacy': a group made by Crack Font 1 (letters 24 px below an untouched original). It can be
+//   rotated and shuffled; Restore just removes the letters.
 import { angleFor, invert, multiply, needsLayer, newSeeds, rotateAround, type Matrix } from './rotate'
 
 export const DATA_KEY = 'crack-font-v2'
+const V1_KEY = 'crack-font-v1'
 export const MAX_LETTERS = 200
 const STRUT = '​' // zero-width space: gives a letter the line box of the whole line
 
@@ -13,9 +16,10 @@ const STRUT = '​' // zero-width space: gives a letter the line box of the whol
 export type LetterData = { id: string; seed: number; cx: number; cy: number }
 export type CrackData = {
   version: 2; originalId: string; left: number; right: number; letters: LetterData[]
-  mode?: 'inside' | 'placeholder'; opacity?: number
+  mode?: 'inside' | 'placeholder' | 'legacy'; opacity?: number; sourceId?: string
 }
-export type Crack = { group: GroupNode; data: CrackData; original: TextNode }
+/** `original` is null only for legacy groups, which have no original of their own. */
+export type Crack = { group: GroupNode; data: CrackData; original: TextNode | null }
 
 export class UserError extends Error {}
 function fail(message: string): never { throw new UserError(message) }
@@ -34,16 +38,69 @@ export function readData(group: GroupNode): CrackData | null {
   return null
 }
 
-/** A Crack Font group (or one of its letters) → the group with its data and hidden original. */
-export function findCrack(node: SceneNode): Crack | null {
+/** Figma rotation of a node in degrees (positive = counter-clockwise). */
+function rotationOf(node: SceneNode): number {
+  const m = node.relativeTransform
+  return Math.atan2(m[0][1], m[0][0]) * 180 / Math.PI
+}
+
+/** A Crack Font 1 group → v2 data in 'legacy' mode. Current angles become the seeds. */
+function fromV1(group: GroupNode): CrackData | null {
+  let v1: { version?: number; sourceId?: string; glyphs?: { id: string; dx: number; dy: number }[] }
+  try { v1 = JSON.parse(group.getPluginData(V1_KEY)) } catch (_) { return null }
+  if (!v1 || v1.version !== 1 || !Array.isArray(v1.glyphs) || !v1.glyphs.length ||
+      !v1.glyphs.every(g => g && typeof g.id === 'string' && Number.isFinite(g.dx) && Number.isFinite(g.dy))) return null
+  const byId = new Map(group.children.map(c => [c.id, c]))
+  const angles = v1.glyphs.map(g => { const n = byId.get(g.id); return n ? rotationOf(n) : 0 })
+  const max = Math.max(...angles.map(Math.abs))
+  const limit = max < 0.25 ? 3 : Math.min(45, Math.max(0.5, Math.round(max * 2) / 2))
+  const seeds = max < 0.25 ? newSeeds(angles.length) : angles.map(a => Math.max(-1, Math.min(1, a / limit)))
+  return {
+    version: 2, originalId: '', left: limit, right: limit, mode: 'legacy', sourceId: v1.sourceId,
+    letters: v1.glyphs.map((g, i) => ({ id: g.id, seed: seeds[i], cx: g.dx, cy: g.dy })),
+  }
+}
+
+export type Inspection = { crack: Crack } | { error: string } | null
+
+/**
+ * A Crack Font group (or one of its letters) → the group with its data and original.
+ * The original is looked up next to/inside the group first, then anywhere in the document, so a
+ * group dragged out of its auto layout frame still finds its placeholder.
+ * Duplicated groups (new layer IDs) are matched by layer order. A group whose original was
+ * deleted is reported as an error instead of being treated as plain layers.
+ */
+export async function inspect(node: SceneNode): Promise<Inspection> {
   const group = node.type === 'GROUP' ? node : node.parent?.type === 'GROUP' ? node.parent : null
   if (!group) return null
-  const data = readData(group)
-  if (!data) return null
+  let data = readData(group)
+  if (!data) {
+    const legacy = fromV1(group)
+    return legacy ? { crack: { group, data: legacy, original: null } } : null
+  }
+  if (data.mode === 'legacy') return { crack: { group, data, original: null } }
   const siblings = data.mode === 'placeholder' ? group.parent?.children ?? [] : group.children
-  const original = siblings.find(c => c.id === data.originalId)
-  if (!original || original.type !== 'TEXT') return null
-  return { group, data, original }
+  let original = siblings.find(c => c.id === data!.originalId) ?? null
+  // A duplicated group carries its own hidden copy of the original: prefer it over the first group's.
+  if (!original && data.mode !== 'placeholder') original = group.children.find(c => c.type === 'TEXT' && !c.visible) ?? null
+  if (!original) {
+    const found = await figma.getNodeByIdAsync(data.originalId)
+    if (found && found.type === 'TEXT' && !found.removed) original = found
+  }
+  if (!original || original.type !== 'TEXT') return { error: 'This group\'s original text was deleted, so it can\'t be changed or restored.' }
+  const ids = new Set(group.children.map(c => c.id))
+  if (!data.letters.some(l => ids.has(l.id))) {
+    const letters = group.children.filter(c => c !== original)
+    if (letters.length === data.letters.length) {
+      data = { ...data, originalId: original.id, letters: data.letters.map((l, i) => ({ ...l, id: letters[i].id })) }
+    }
+  }
+  return { crack: { group, data, original } }
+}
+
+/** Throws when the group or one of its parents is locked or hidden. */
+export function assertCrackEditable(crack: Crack): void {
+  assertEditable(crack.group)
 }
 
 // ---------- validation ----------
@@ -51,7 +108,7 @@ export function findCrack(node: SceneNode): Crack | null {
 function assertEditable(node: SceneNode): void {
   let n: BaseNode | null = node
   while (n && n.type !== 'PAGE' && n.type !== 'DOCUMENT') {
-    if ('locked' in n && n.locked) fail('Unlock the selected layer and its parents first.')
+    if ('locked' in n && n.locked) fail('Unlock the layer and its parents first.')
     if ('visible' in n && !n.visible) fail('Select a visible layer.')
     n = n.parent
   }
@@ -60,16 +117,16 @@ function assertEditable(node: SceneNode): void {
 export function validateSource(node: TextNode): void {
   assertEditable(node)
   for (let n: BaseNode | null = node.parent; n && n.type !== 'PAGE'; n = n.parent) {
-    if (n.type === 'INSTANCE') fail('Text inside an instance cannot be split. Edit the main component or detach the instance.')
+    if (n.type === 'INSTANCE') fail('Text in an instance can\'t be split. Detach it or edit the main component.')
   }
   const text = node.characters
   if (!text.trim()) fail('Select text with at least one visible letter.')
   if (text.length > MAX_LETTERS) fail(`Use at most ${MAX_LETTERS} characters, including spaces.`)
   // Conservative: no UTF-16 slicing of emoji, combining marks or shaping scripts.
   if (!/^[\x20-\x7eÀ-ÿ]+$/.test(text)) {
-    fail('Use a single line of Latin letters. Line breaks, emoji, combining accents and other scripts are not supported.')
+    fail('Use one line of Latin letters. Emoji and other scripts aren\'t supported.')
   }
-  if (node.textAutoResize !== 'WIDTH_AND_HEIGHT') fail('Set the text to Auto width first. Wrapped or fixed-size text is not supported.')
+  if (node.textAutoResize !== 'WIDTH_AND_HEIGHT') fail('Set the text to Auto width first. Wrapped text isn\'t supported.')
   if (node.hasMissingFont) fail('Resolve missing fonts first.')
 }
 
@@ -208,10 +265,31 @@ export async function split(source: TextNode, left: number, right: number): Prom
 
 // ---------- rotate ----------
 
+/**
+ * The coordinate frame the letter centres are stored in: the original text, or for legacy groups
+ * the current centre of the first letter that still exists (letters turn around their centres,
+ * so it only moves when the whole group moves).
+ */
+function letterFrame({ group, data, original }: Crack, byId: Map<string, SceneNode>): Matrix | null {
+  if (original) return original.absoluteTransform as Matrix
+  for (const l of data.letters) {
+    const n = byId.get(l.id)
+    if (!n) continue
+    const t = n.absoluteTransform
+    const x = t[0][0] * n.width / 2 + t[0][1] * n.height / 2 + t[0][2]
+    const y = t[1][0] * n.width / 2 + t[1][1] * n.height / 2 + t[1][2]
+    return [[1, 0, x - l.cx], [0, 1, y - l.cy]]
+  }
+  return null
+}
+
 /** Applies data.left / data.right / seeds to every letter that still exists and saves the data. */
-export function rotate({ group, data, original }: Crack): void {
-  const toLocal = multiply(invert(containerTransform(group)), original.absoluteTransform as Matrix)
-  const byId = new Map(group.children.map(c => [c.id, c]))
+export function rotate(crack: Crack): void {
+  const { group, data } = crack
+  const byId = new Map(group.children.map(c => [c.id, c] as [string, SceneNode]))
+  const frame = letterFrame(crack, byId)
+  if (!frame) fail('All letters of this group were deleted.')
+  const toLocal = multiply(invert(containerTransform(group)), frame)
   for (const l of data.letters) {
     const node = byId.get(l.id)
     if (!node || node.type !== 'TEXT') continue // deleted letters are simply skipped
@@ -229,9 +307,17 @@ export function shuffle(crack: Crack): void {
 
 // ---------- restore ----------
 
-/** Puts the original text back (where the group is, or in its layout slot) and removes the letters. */
-export function restore({ group, original, data }: Crack): TextNode {
+/**
+ * Puts the original text back (where the group is, or in its layout slot) and removes the letters.
+ * Legacy groups never touched their original: the letters are removed and the original returned if found.
+ */
+export function restore({ group, original, data }: Crack): TextNode | null {
   assertEditable(group)
+  if (!original) {
+    const source = group.parent && 'children' in group.parent ? group.parent.children.find(c => c.id === data.sourceId) : undefined
+    group.remove()
+    return source && source.type === 'TEXT' ? source : null
+  }
   original.locked = false
   if (data.mode === 'placeholder') {
     original.opacity = data.opacity ?? 1

@@ -1,32 +1,49 @@
 // Plugin sandbox: selection handling, live editing on the canvas, undo grouping.
-import { findCrack, rotate, restore, shuffle, split, validateSource, UserError, type Crack } from './crack'
+import { assertCrackEditable, inspect, rotate, restore, shuffle, split, validateSource, UserError, type Crack } from './crack'
 import { clampAngle } from './rotate'
 
 type Message = { type?: string; left?: unknown; right?: unknown }
 type Target = { kind: 'crack'; crack: Crack } | { kind: 'text'; node: TextNode } | { kind: 'none'; error: string }
 
-function target(): Target {
+const NO_SELECTION = 'Select a text layer.'
+
+async function target(): Promise<Target> {
   const selection = figma.currentPage.selection
-  if (selection.length !== 1) return { kind: 'none', error: selection.length ? 'Select only one text layer.' : 'Select a text layer.' }
+  if (selection.length !== 1) return { kind: 'none', error: selection.length ? 'Select only one text layer.' : NO_SELECTION }
   const node = selection[0]
-  const crack = findCrack(node)
-  if (crack) return { kind: 'crack', crack }
+  const found = await inspect(node)
+  if (found && 'error' in found) return { kind: 'none', error: found.error }
+  if (found) return { kind: 'crack', crack: found.crack }
   if (node.type !== 'TEXT') return { kind: 'none', error: 'Select a text layer.' }
   return { kind: 'text', node }
 }
 
-function postSelection(): void {
-  const t = target()
+// Selection info is computed asynchronously; only the newest request may post.
+let selectionRequest = 0
+async function postSelection(): Promise<void> {
+  const request = ++selectionRequest
+  const t = await target()
+  if (request !== selectionRequest) return
   if (t.kind === 'crack') {
-    const { data, original } = t.crack
-    figma.ui.postMessage({ type: 'selection', kind: 'crack', name: original.characters, letters: data.letters.length, left: data.left, right: data.right })
+    const { data, original, group } = t.crack
+    const legacy = !original
+    const name = original ? original.characters : group.name.replace(/^Crack Font\s*[-–]\s*/, '')
+    let error: string | undefined
+    try { assertCrackEditable(t.crack) } catch (e) { error = e instanceof Error ? e.message : String(e) }
+    figma.ui.postMessage({ type: 'selection', kind: 'crack', name, letters: data.letters.length, left: data.left, right: data.right, legacy, error })
   } else if (t.kind === 'text') {
     let error: string | undefined
     try { validateSource(t.node) } catch (e) { error = e instanceof Error ? e.message : String(e) }
     figma.ui.postMessage({ type: 'selection', kind: 'text', name: t.node.characters, letters: t.node.characters.length, error })
   } else {
-    figma.ui.postMessage({ type: 'selection', kind: 'none', error: t.error })
+    // Nothing selected is not an error: the UI shows its own hint.
+    figma.ui.postMessage({ type: 'selection', kind: 'none', error: t.error === NO_SELECTION ? undefined : t.error })
   }
+}
+
+/** Fire-and-forget selection update (from events). */
+function refresh(): void {
+  postSelection().catch(error => console.error(error))
 }
 
 function status(message: string, error = false): void {
@@ -63,10 +80,10 @@ function select(node: SceneNode): void {
 /** Splits the selected text on first use, otherwise returns the selected Crack Font group. */
 async function crackFor(t: Target, left: number, right: number): Promise<Crack | null> {
   if (t.kind === 'none') { status(t.error, true); return null }
-  if (t.kind === 'crack') return t.crack
+  if (t.kind === 'crack') { assertCrackEditable(t.crack); return t.crack }
   const crack = await split(t.node, left, right)
   select(crack.group)
-  postSelection()
+  await postSelection()
   status(`${crack.data.letters.length} letters. Restore turns them back into one text layer.`)
   return crack
 }
@@ -96,7 +113,7 @@ async function waitForLive(): Promise<void> {
 async function applyLive(msg: Message): Promise<void> {
   const a = angles(msg)
   if (!a) return
-  const t = target()
+  const t = await target()
   const wasText = t.kind === 'text'
   const crack = await crackFor(t, a.left, a.right)
   if (!crack) return
@@ -112,7 +129,7 @@ async function runShuffle(msg: Message): Promise<void> {
   const a = angles(msg)
   if (!a) return
   commit()
-  const t = target()
+  const t = await target()
   const crack = await crackFor(t, a.left, a.right) // a fresh split already has new seeds
   if (!crack) return
   if (t.kind === 'crack') {
@@ -124,15 +141,16 @@ async function runShuffle(msg: Message): Promise<void> {
   commit()
 }
 
-function runRestore(): void {
-  const t = target()
+async function runRestore(): Promise<void> {
+  const t = await target()
   if (t.kind !== 'crack') { status('Select a Crack Font group to restore.', true); return }
+  const legacy = !t.crack.original
   const original = restore(t.crack)
   dirty = true
   commit()
-  select(original)
-  postSelection()
-  status('Original text restored.')
+  if (original) select(original)
+  await postSelection()
+  status(legacy ? 'Letters removed. Your original text was never changed.' : 'Original text restored.')
 }
 
 async function exclusive(task: () => Promise<void> | void): Promise<void> {
@@ -156,13 +174,13 @@ figma.on('selectionchange', () => {
   if (ownSelection && selection.length === 1 && selection[0].id === ownSelection) { ownSelection = null; return }
   ownSelection = null
   commit()
-  if (!busy) postSelection()
+  if (!busy) refresh()
 })
 
 figma.ui.onmessage = async (msg: Message) => {
   if (!msg || typeof msg !== 'object') return
   switch (msg.type) {
-    case 'ready': postSelection(); return
+    case 'ready': refresh(); return
     case 'resize': {
       const h = (msg as { height?: unknown }).height
       if (typeof h === 'number' && Number.isFinite(h)) figma.ui.resize(280, Math.max(120, Math.min(600, Math.round(h))))
@@ -176,4 +194,4 @@ figma.ui.onmessage = async (msg: Message) => {
 }
 
 // Tell the UI about the current selection right away; Figma delivers it once the UI has loaded.
-postSelection()
+refresh()

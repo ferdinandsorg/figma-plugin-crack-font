@@ -86,6 +86,11 @@ export class Fan {
     this.render()
   }
 
+  /** Swaps the sample letter (the easter egg: type any letter or digit). */
+  setLetter(char: string): void {
+    for (const t of Object.values(this.letters)) t.textContent = char
+  }
+
   setDisabled(disabled: boolean): void {
     this.disabled = disabled
     this.root.classList.toggle('disabled', disabled)

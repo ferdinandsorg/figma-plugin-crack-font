@@ -127,7 +127,7 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
   - **Gradzahl direkt eingeben** (Zahlenfeld neben dem Regler). Grenze **45°**: Darüber stehen die Buchstaben fast quer und überlappen, das sieht nicht mehr nach „Crack“ aus. Eingaben darüber werden auf 45° gesetzt. Der Regler deckt 0–45° ab. (Zahlenfeld kommt mit `fig-slider text` schon in Phase 2.)
   - **Coolere Interaktion** als die zwei Regler, z. B. ein Bogen/Fächer, der den Bereich links ↔ rechts zeigt und an dem man beide Enden zieht. Ideen in Phase 3 zeigen, sonst später.
 
-**Phase 4 – Feinschliff & Fehlerfälle**
+**Phase 4 – Feinschliff & Fehlerfälle ✅ umgesetzt und in Figma getestet**
 - ✅ (vorgezogen) **Text in Frames, Gruppen und Auto-Layout**:
   - Frames/Gruppen/Sections/Components: Buchstaben-Gruppe an der Stelle des Texts im selben Elternteil, Original unsichtbar darin (wie auf der Seite).
   - **Auto-Layout**: Das Original bleibt an seinem Platz im Layout, mit Deckkraft 0 und gesperrt, und hält so den Platz frei. Die Buchstaben-Gruppe liegt direkt darüber, absolut positioniert (`layoutPositioning = ABSOLUTE`). Frame-Höhe und alle anderen Elemente bleiben, wo sie sind. Restore setzt die ursprüngliche Deckkraft zurück und löscht die Gruppe. Verschiebt das Layout den Text später (z. B. anderes Padding), springen die Buchstaben bei der nächsten Änderung mit.
@@ -135,9 +135,19 @@ Einschränkungen heute: nur oberste Ebene, eine Zeile, Auto width, linksbündig,
   - In Figma per MCP mit dem echten Code geprüft (Testfälle „08 Frame“, neu „09 Auto layout“): Positionen exakt, Layout unverändert, Restore exakt.
   - Erkenntnis: `clone()` legt die Kopie immer auf der Seite ab, nicht im Frame. Die Positionen setzt deshalb erst `rotate()` nach dem Gruppieren.
 - Zentrierter und rechtsbündiger Text funktioniert schon (seit Phase 1). Zeichenlimit 200 bleibt.
-- Gemischte Schriften, fehlende Schrift, gesperrte Ebenen, geänderte Buchstaben (Restore trotzdem möglich?).
-- Alte Gruppen aus Version 1 (24 px darunter, ohne Restore): weiter shuffeln können, Restore dort nicht anbieten.
-- README neu, Name im Manifest „Crack Font“.
+- ✅ **Duplizierte Gruppen** (⌘D, Copy/Paste) funktionieren weiter: Die neuen Ebenen-IDs werden über die Reihenfolge zugeordnet, Restore holt das Original aus der Kopie.
+- ✅ **Original gelöscht** (z. B. das unsichtbare Original im Auto-Layout): klare Meldung statt „Select a text layer“.
+- ✅ **Gesperrte oder ausgeblendete Gruppe**: Meldung „Unlock the layer and its parents first.“, nichts wird verändert.
+- ✅ **Gelöschte oder geänderte Buchstaben**: werden übersprungen bzw. um ihre Mitte gedreht, Restore geht immer.
+- ✅ Fehlende Schrift: wird vor dem Aufteilen abgefangen. Drehen braucht keine geladene Schrift (in Figma geprüft), Gruppen mit fehlender Schrift lassen sich also weiter drehen.
+- ✅ **Gruppen aus Crack Font 1** (24 px unter dem Original): werden erkannt. Die aktuellen Winkel werden zum Muster (Left/Right = größter Winkel), danach lassen sie sich drehen und shuffeln. Restore entfernt die Buchstaben und wählt das unveränderte Original aus. Hinweis im Plugin.
+- ✅ README neu (Englisch, wie bisher). Name im Manifest „Crack Font“ (seit Phase 0).
+- ✅ **Easter Egg**: Ein Buchstabe oder eine Ziffer auf der Tastatur ersetzt das „A“ im Fächer (immer groß). Nicht in den Zahlenfeldern, nicht mit ⌘/Ctrl/Alt.
+- Feedback-Runde (2026-11-18):
+  - **„Original deleted“ im Auto-Layout**: Der reine Ablauf cracken → Restore → cracken funktioniert (in Figma nachgespielt). Die Meldung kam, sobald die absolut positionierte Buchstaben-Gruppe nicht mehr im selben Frame lag wie das Original. Das passiert, wenn man sie zieht und Figma sie umhängt. Das Original wird jetzt zuerst neben bzw. in der Gruppe gesucht, dann im ganzen Dokument (`getNodeByIdAsync`). Dadurch ist die Auswahl-Prüfung im Plugin jetzt asynchron, und nur die neueste Anfrage meldet sich beim UI. Duplikate nutzen weiterhin ihr eigenes Original.
+  - **UI springt nicht mehr**: Auswahl-Zeile immer einzeilig, Probleme stehen in der Statuszeile. Die Statuszeile hat immer zwei Zeilen Platz und zeigt in jedem Zustand etwas (Hinweis, Meldung oder Fehler). Alle Meldungen auf höchstens zwei Zeilen gekürzt. „Select a text layer“ ist kein roter Fehler mehr. Im Browser gemessen: Fensterhöhe in allen Zuständen 334 px.
+  - Klarstellung: Im Auto-Layout liegt das Original absichtlich außerhalb der Gruppe (unsichtbar, gesperrt), damit es den Platz im Layout hält.
+- Tests: 46 grün.
 - Version 2.0: `package.json` steht auf 2.0.0. Das Feld `"api": "1.0.0"` im Manifest ist die **Version der Figma-Plugin-API**, nicht die des Plugins, und muss so bleiben. Die Versionsnummer des Plugins vergibt Figma beim Veröffentlichen; dort in den Release-Notes „2.0“ angeben.
 
 **Phase 5 – Community-Assets (zum Schluss)**

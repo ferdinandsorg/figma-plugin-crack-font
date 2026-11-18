@@ -2,7 +2,7 @@
 import { Fan, type Side } from './fan'
 
 const MAX = 45, STEP = 0.5
-type Selection = { type: 'selection'; kind: 'crack' | 'text' | 'none'; name?: string; letters?: number; left?: number; right?: number; error?: string }
+type Selection = { type: 'selection'; kind: 'crack' | 'text' | 'none'; name?: string; letters?: number; left?: number; right?: number; error?: string; legacy?: boolean }
 type Incoming = Selection | { type: 'status'; message: string; error: boolean } | { type: 'busy'; busy: boolean }
 type Field = HTMLElement & { value?: string | number }
 
@@ -13,10 +13,9 @@ const values: Record<Side, number> = { left: 3, right: 3 }
 let selection: Selection = { type: 'selection', kind: 'none' }
 let busy = false
 let linked = false
-let hint = true // show the "how it works" line until the first status message
 
 const send = (msg: object) => parent.postMessage({ pluginMessage: msg }, '*')
-const usable = () => !busy && (selection.kind === 'crack' || (selection.kind === 'text' && !selection.error))
+const usable = () => !busy && selection.kind !== 'none' && !selection.error
 const clamp = (v: number) => Math.min(MAX, Math.max(0, Math.round(v / STEP) * STEP))
 
 // Coalesce changes to one message per frame; the plugin also keeps only the newest.
@@ -58,6 +57,13 @@ $('link').addEventListener('click', () => {
   if (linked && values.left !== values.right) setAngle('left', Math.max(values.left, values.right), 'field')
 })
 
+// Easter egg: press a letter or digit anywhere (outside the number fields) and the fan shows it.
+document.addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
+  if (e.target instanceof Element && e.target.closest('fig-input-number, input, textarea, [contenteditable]')) return
+  if (/^[a-z0-9äöüàáâãåæçèéêëìíîïñòóôõøùúûýÿ]$/i.test(e.key)) fan.setLetter(e.key.toLocaleUpperCase())
+})
+
 function onClick(id: string, handler: () => void): void {
   $(id).addEventListener('click', () => { if (!$(id).hasAttribute('disabled')) handler() })
 }
@@ -69,31 +75,39 @@ function plural(n = 0): string { return `${n} ${n === 1 ? 'letter' : 'letters'}`
 
 function render(): void {
   const s = selection
-  const bar = $('selection-bar')
-  bar.className = `selection-bar ${s.error ? 'error' : s.kind}`
-  $('selection').textContent = s.error ?? (s.kind === 'none' ? 'Select a text layer' : `${s.name} · ${plural(s.letters)}`)
+  // The selection bar is always one line, so the window keeps its height; problems go to the status line.
+  $('selection-bar').className = `selection-bar ${s.kind}${s.error ? ' error' : ''}`
+  $('selection').textContent = s.kind === 'none' ? 'Select a text layer' : `${s.name} · ${plural(s.letters)}`
   $('selection').title = s.kind === 'none' ? '' : s.name ?? ''
   const on = usable()
   fan.setDisabled(!on)
   for (const f of Object.values(fields)) f.toggleAttribute('disabled', !on)
   $('link').toggleAttribute('disabled', !on)
   $('shuffle').toggleAttribute('disabled', !on)
-  $('restore').toggleAttribute('disabled', busy || s.kind !== 'crack')
+  $('restore').toggleAttribute('disabled', busy || s.kind !== 'crack' || !!s.error)
   $('done').toggleAttribute('disabled', busy)
-  if (hint && !statusEl.textContent) showHint()
+  renderStatus()
 }
 
-function showHint(): void {
-  const text = selection.kind === 'text' && !selection.error ? 'Drag the fan or type an angle. The text splits into letters on the first change.' : ''
-  statusEl.textContent = text
-  statusEl.classList.remove('error')
+/** Status line: a message from the plugin, else the selection's problem, else a hint. */
+function renderStatus(): void {
+  const s = selection
+  const shown = message ?? (s.error ? { text: s.error, error: true } : { text: hintFor(s), error: false })
+  statusEl.textContent = shown.text
+  statusEl.classList.toggle('error', shown.error)
 }
 
-function status(message: string, error = false): void {
-  hint = !message
-  statusEl.textContent = message
-  statusEl.classList.toggle('error', error)
-  if (hint) showHint()
+function hintFor(s: Selection): string {
+  if (s.kind === 'none') return 'Select a single-line text layer to crack its letters.'
+  if (s.kind === 'text') return 'Drag the fan or type an angle. The text splits into letters on the first change.'
+  if (s.legacy) return 'From Crack Font 1. Restore removes these letters; the original is untouched.'
+  return 'Drag the fan or Shuffle for a new pattern. Restore brings back the text layer.'
+}
+
+let message: { text: string; error: boolean } | null = null
+function status(text: string, error = false): void {
+  message = text ? { text, error } : null
+  renderStatus()
 }
 
 // Figma Desktop does not deliver plugin messages with event.source === parent, so don't filter on it
