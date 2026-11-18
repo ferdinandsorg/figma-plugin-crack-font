@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script>
+    // Figma plugin iframes may block localStorage; FigUI3 reads it, so provide an in-memory stand-in.
+    try { window.localStorage.getItem('x') } catch (e) {
+      const store = new Map()
+      Object.defineProperty(window, 'localStorage', { configurable: true, value: {
+        getItem: k => store.has(String(k)) ? store.get(String(k)) : null,
+        setItem: (k,v) => store.set(String(k),String(v)), removeItem: k => store.delete(String(k)),
+        clear: () => store.clear(), key: i => Array.from(store.keys())[i] ?? null, get length() { return store.size }
+      } })
+    }
+  </script>
+  <style>
+    :root {
+      --ring:var(--figma-color-border-selected, #0d99ff);
+      --font-family:Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --body-medium-fontSize:12px;
+      --body-medium-lineHeight:20px;
+      --body-small-fontSize:12px;
+      --body-small-lineHeight:18px;
+      --body-medium-strong-fontWeight:600;
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; padding:0; height:auto; min-height:0; background:var(--figma-color-bg); color:var(--figma-color-text); font:var(--body-medium-fontSize)/var(--body-medium-lineHeight) var(--font-family); }
+
+    .selection-bar { display:flex; align-items:center; gap:8px; min-height:40px; padding:8px 16px; border-bottom:1px solid var(--figma-color-border); }
+    .selection-bar svg { flex:none; color:var(--figma-color-icon-secondary); transition:transform .15s ease; }
+    .selection-bar.crack svg { transform:rotate(-12deg); color:var(--figma-color-icon); }
+    #selection { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .selection-bar.none #selection { color:var(--figma-color-text-secondary); }
+    .selection-bar.error svg { color:var(--figma-color-icon-danger, var(--figma-color-text-danger)); }
+
+    .controls { display:grid; gap:8px; padding:12px 16px 12px; }
+    .fan-wrap { display:flex; justify-content:center; }
+    .fan { display:block; touch-action:none; cursor:grab; overflow:visible; }
+    .fan.dragging { cursor:grabbing; }
+    .fan.disabled { opacity:.4; pointer-events:none; }
+    .fan-track { fill:none; stroke:var(--figma-color-border); stroke-width:1; }
+    .fan-tick { stroke:var(--figma-color-border-strong, var(--figma-color-border)); stroke-width:1; }
+    .fan-zero { stroke:var(--figma-color-border); stroke-dasharray:2 3; }
+    .fan-wedge { fill:var(--figma-color-bg-brand); opacity:.14; }
+    .fan-edge { stroke:var(--figma-color-bg-brand); stroke-width:1.5; }
+    .fan-letter { font:600 44px/1 var(--font-family); fill:var(--figma-color-text); pointer-events:none; user-select:none; }
+    .fan-letter.ghost { fill:var(--figma-color-text-brand, var(--figma-color-bg-brand)); opacity:.35; }
+    .fan-handle { fill:var(--figma-color-bg); stroke:var(--figma-color-bg-brand); stroke-width:2; cursor:grab; outline:none; }
+    .fan-handle:focus-visible { stroke-width:3; filter:drop-shadow(0 0 0 var(--ring)); }
+
+    .angles { display:grid; grid-template-columns:1fr 24px 1fr; align-items:center; gap:8px; }
+    .angle { display:grid; gap:2px; }
+    .angle label { color:var(--figma-color-text-secondary); font-size:11px; line-height:16px; }
+    .angle.right label { text-align:right; }
+    #link { align-self:end; }
+    #link svg { display:block; }
+
+    /* Always two lines tall, so the window doesn't jump when the message changes. */
+    #status { padding:0 16px 8px; min-height:44px; font-size:12px; line-height:18px; color:var(--figma-color-text-secondary); }
+    #status.error { color:var(--figma-color-text-danger); }
+    fig-footer .spacer { flex:1; }
+    fig-button svg { display:block; }
+    #shuffle svg { margin-right:4px; }
+  </style>
+</head>
+<body>
+  <div id="selection-bar" class="selection-bar none">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M3 3h10v2.5h-1V4H8.5v8H10v1H6v-1h1.5V4H4v1.5H3z"/></svg>
+    <span id="selection">Select a text layer</span>
+  </div>
+  <section class="controls" aria-label="Rotation">
+    <div id="fan" class="fan-wrap"></div>
+    <div class="angles">
+      <div class="angle left">
+        <label for="left">Tilt left</label>
+        <fig-input-number id="left" value="3" min="0" max="45" step="1" units="°" full></fig-input-number>
+      </div>
+      <fig-button id="link" variant="ghost" icon title="Same angle on both sides" aria-label="Same angle on both sides" aria-pressed="false">
+        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" d="M10.5 13.5l3-3M9.5 11l-1.6 1.6a2.4 2.4 0 0 0 3.4 3.4l1.6-1.6M14.5 13l1.6-1.6a2.4 2.4 0 0 0-3.4-3.4L11 9.6"/></svg>
+      </fig-button>
+      <div class="angle right">
+        <label for="right">Tilt right</label>
+        <fig-input-number id="right" value="3" min="0" max="45" step="1" units="°" full></fig-input-number>
+      </div>
+    </div>
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
+  <fig-footer>
+    <fig-button id="restore" variant="secondary" title="Turn the letters back into the original text layer">Restore</fig-button>
+    <span class="spacer"></span>
+    <fig-button id="shuffle" variant="secondary" title="New random rotation">
+      <svg slot="prepend" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" d="M2.5 4.5h2.2c1 0 1.9.5 2.5 1.3l1.6 2.4c.6.8 1.5 1.3 2.5 1.3h2.2M2.5 11.5h2.2c1 0 1.9-.5 2.5-1.3M9 5.8c.6-.8 1.5-1.3 2.5-1.3h2M12 2.5l2 2-2 2M12 9.5l2 2-2 2"/></svg>
+      Shuffle
+    </fig-button>
+    <fig-button id="done" title="Finish editing and close">Done</fig-button>
+  </fig-footer>
+  <!-- UI_SCRIPT -->
+</body>
+</html>

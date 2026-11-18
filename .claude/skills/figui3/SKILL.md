@@ -1,0 +1,103 @@
+---
+name: figui3
+description: >-
+  Guides FigUI3 core (`fig.js` / `fig.css`) web components for Figma-style plugin UIs,
+  including React JSX usage. Use when adding, using, or debugging fig-* elements from
+  the core bundle—buttons, fields, overlays, menus, toolbelts, sliders, color/fill inputs,
+  media, dialogs, popups, toasts. Not for fig-select or fig-fill-picker (fig-editor),
+user-invocable: false
+# Source: @rogieking/figui3 v12.0.3 (.cursor/skills), MIT
+---
+
+# FigUI3 core (`fig.js`)
+
+Zero-dependency web components for Figma UI3 plugin and widget UIs.
+
+Public API: `node_modules/@rogieking/figui3/README.md`. React: [react.md](react.md). Per-tag JSX: [components.md](components.md). Attrs: [reference.md](reference.md).
+
+
+## Bundles
+
+Always import CSS with JS. Register before first render. In React, see [react.md](react.md).
+
+```js
+import "@rogieking/figui3/fig.css";
+import "@rogieking/figui3/fig.js";
+```
+
+| Bundle | CSS + JS | Components |
+|---|---|---|
+| **Core** (this skill) | `fig.css` + `fig.js` | All `fig-*` in [components.md](components.md) |
+| **Extended** | `@rogieking/figui3-extended` | Editor and experimental Lab components |
+
+`fig.js` registers `fig-layer`; add `fig-layer.css` for its presentation.
+`fig-layer.js` remains a standalone registration entry. Extended components
+come from a separately licensed package. See
+[`BUNDLES.md`](../../../node_modules/@rogieking/figui3/BUNDLES.md) for the generated registration inventory.
+
+## Principles
+
+1. Prefer existing `fig-*` tags over one-off markup.
+2. Use design tokens (`--figma-color-*`, `--radius-*`, `--spacer-*`). Do not hardcode Figma colors.
+3. Emit `input` while interacting and `change` on commit. Do not fire `input` from programmatic attribute writes.
+4. Preserve a11y: labels, keyboard, ARIA, disabled. See the `a11y` skill.
+5. Keep components framework-agnostic. No React internals in `fig.js`.
+
+## Overlay rules
+
+- `<dialog is="fig-dialog">` — modal/task dialog. `position` is viewport placement. No `anchor`.
+- `<dialog is="fig-popup">` — anchored float (`anchor`, `position`, `offset`, `viewport-margin`). `title` auto-builds a header. `variant="popover"` uses CSS `filter` (containing block for `position: fixed`). Sticky `fig-separator` + `fig-menu-item` lists scroll on the popup.
+- `<dialog is="fig-toast">` — call `showToast()`. `theme`, `duration`, `live`, `dismiss`, `icon`.
+- `fig-menu` and `fig-select` use `popover="manual"` so lists escape filter-containing popups to the top layer. Nested menus inside popovers must keep that. `fig-menu` slots items (does not relocate them); triggers get `slot="trigger"`.
+
+```tsx
+<dialog is="fig-dialog" drag handle="fig-header">
+  <fig-header>
+    Title
+    <fig-button variant="ghost" icon close-dialog aria-label="Close">
+      <fig-icon name="close" />
+    </fig-button>
+  </fig-header>
+  <fig-content>Body</fig-content>
+</dialog>
+```
+
+## Field composition
+
+```tsx
+<fig-field direction="horizontal">
+  <label>Opacity</label>
+  <fig-slider value="75" min="0" max="100" text="true" units="%" full />
+</fig-field>
+```
+
+
+## Select vs dropdown
+
+| Tag | Bundle | Use |
+|---|---|---|
+| `fig-dropdown` | core | Native `<select>` wrapper. `type="select\|dropdown"`, `variant="ghost"` |
+| `fig-select` | editor | Custom listbox: groups, overflow chevrons, sticky separators, rich options |
+
+Prefer `fig-select` for Figma-style menus. Use `fig-dropdown` only for a native select.
+
+## Events
+
+```txt
+fig-slider          input/change → e.currentTarget.value
+fig-input-color     input/change → detail { color, alpha, opacity } plus legacy value/hex/rgba
+fig-input-fill      input/change → fill payload in e.detail
+fig-menu            change → detail { value }
+fig-dialog/popup    native dialog close plus FigUI3 positioning attrs
+```
+
+`fig-angle` is core. `fig-input-wheel` remains **lab**.
+
+## Maintainer workflow
+
+1. Read the owning `src/core/components/` JS/CSS pair plus `src/core/index.*` before editing. Root `fig.js` and `components.css` are public barrels.
+2. Update `README.md` + `CHANGELOG.md` for public API changes.
+3. `npm run build` for dist.
+4. Tests: `npm run test:components` (Playwright).
+
+Primary files: `src/core/`, `src/shared/`, `fig.js`, `components.css`, `base.css`, `README.md`.

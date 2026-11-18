@@ -1,0 +1,867 @@
+# FigUI3 core components (`fig.js`)
+
+React contract: [react.md](react.md). Attrs: [reference.md](reference.md).
+
+Handlers below follow [react.md](react.md). JSX `onChange` examples target React
+19; React 18 consumers must attach `change` through `addEventListener`.
+
+Public events that bubble are composed, so they cross ancestor shadow roots.
+Cancelability is event-specific; check `event.cancelable` before preventing one.
+
+## Buttons and inputs
+
+Property-compatible controls expose `.default`, `.defaultValue`, `.isDefault`, and `.resetToDefault()`. Scalar controls author `default`; checkbox/switch use `default-checked`; files use `default-url` and `default-filename`. Reset is disabled-safe, emits `input` then `change`, and does nothing when already at default.
+
+### `fig-button`
+
+```tsx
+<fig-button variant="ghost" icon aria-label="Close" onClick={onClick}>
+  <fig-icon name="close" />
+</fig-button>
+
+<fig-button
+  variant="property"
+  aria-haspopup="dialog"
+  aria-controls="effects-editor"
+  onClick={onClick}
+>
+  <fig-icon name="settings" slot="prepend" />
+  <span slot="label">Effects</span>
+</fig-button>
+```
+
+- Attrs: `variant` (`""` primary, `secondary`, `property`, `destructive`, `destructiveSecondary`, `destructiveGhost`, `destructiveLink`, `ghost`, `link`, `input`, `overlay`), `type` (`button`, `toggle`, `submit`, `select`, `upload`), `size` (`""`, `large`), `align`, `selected`, `disabled`, `icon` (boolean or `"compact"`), `pill`, `close-dialog`
+- Wrap truncatable text in an authored `slot="label"` element. A direct `<label>` child receives the same styles without DOM mutation; raw text remains supported but cannot reliably ellipsize in flex layout.
+- `variant="property"` shares secondary styling and adds full-width, start-aligned property-trigger layout; use `slot="prepend"` for its leading icon
+- Property triggers own no popup behavior; consumers manage the popup/dialog and reflect `selected`, `aria-haspopup`, `aria-expanded`, and `aria-controls`
+- Events: `click`; toggle also reflects `selected`
+
+### `fig-button-play`
+
+```tsx
+<fig-button-play
+  duration="8"
+  playing={playing || undefined}
+  onPlay={onPlay}
+  onPause={onPause}
+/>
+```
+
+- Embeds `<fig-button variant="secondary" icon pill>` with a play/pause `fig-icon`.
+- Attrs: `playing`, `duration` (seconds, default `5`), `progress` (`0`–`1`), `variant`, `size`, `disabled`.
+- Omitting `progress` uses the internal pause/resume timer; authoring `progress` selects controlled mode.
+- Methods: `play()`, `pause()`, `toggle()`, `reset()`.
+- Events: `play`, `pause`, and internal-timer `complete`.
+
+### `fig-button-combo`
+
+```tsx
+<fig-button-combo>
+  <fig-button>Save</fig-button>
+  <fig-button variant="secondary">Cancel</fig-button>
+</fig-button-combo>
+```
+
+- Attrs: none required. Children stay in light DOM.
+
+### `fig-dropdown`
+
+```tsx
+<fig-dropdown value={value} variant="ghost" size="large" full onChange={onChange}>
+  <option value="left">Left</option>
+  <option value="center">Center</option>
+</fig-dropdown>
+```
+
+- Attrs: `value`, `type` (`select` | `dropdown`), `variant` (`ghost`), `size` (`large`), `full`, `disabled`
+- Events: `input` / `change` → `currentTarget.value`
+- Prefer `fig-select` (editor) for Figma-style menus.
+
+### `fig-split-input`
+
+```tsx
+<fig-split-input
+  type="number"
+  value={value}
+  options="8,16,24"
+  placeholder="Size"
+  full
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `type` (`text` | `number`, default `text`), `value`, `options`, `placeholder`, `disabled`, `full`
+- Uses `fig-select` when the editor bundle is registered; otherwise uses core `fig-dropdown`.
+- Exact typed option matches are selected and checked; unmatched values clear the option selection.
+- Legacy alias: `fig-combo-input`
+
+### `fig-input-text`
+
+```tsx
+<fig-input-text
+  value={value}
+  placeholder="Name"
+  full
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `type` (`text`, `email`, `password`, `search`, `url`), `value`, `default`, `size` (`large`), `multiline`, `autoresize`, `resizable`, `disabled`, `readonly`, `placeholder`, `full`
+
+### `fig-input-number`
+
+```tsx
+<fig-input-number
+  value={String(n)}
+  min="0"
+  max="100"
+  step="1"
+  units="%"
+  full
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `value`, `default`, `variant` (`ghost`), `min`, `max`, `step`, `precision`, `units`, `units-disallow`, `steppers` (defaults to `true`; set `"false"` to hide), `tabular`, `disabled`, `full`
+
+### `fig-angle`
+
+```tsx
+<fig-angle
+  value={String(angle)}
+  units="deg"
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `value`, `default`, `precision` (defaults: deg/grad 0, rad 2, turn 3), `dial` (default true), optional `min`/`max`, `step` (defaults: deg/° 1, rad 0.01, turn 0.001, grad 0.1), `units` (`deg`, `°`, `rad`, `turn`, `grad`; degrees display as `°`), `rotations`, `disabled`, `full`
+- Property: `defaultValue` returns the resolved default; values are unbounded unless `min`/`max` are authored.
+- Changing `units` converts `value`, `default`, `min`, `max`, and `step` to preserve physical angles.
+- The surface shows the shared focus outline for dial/input focus and dragging. Dial Arrow keys use `step`; Shift-drag and dial Shift+Arrow move in 15° increments. The internal number input retains built-in Up/Down, Shift×10, and Alt-drag scrubbing.
+- An inset reset button appears when `value` differs from `default`; activating it emits `input` and `change`.
+- Events: `input` while editing and `change` on commit, with `{ value, angle, units }`; event values are rounded to `precision` without reducing stored precision
+- The arrow sweeps from zero to the signed angle directly over the outer dial boundary. `customElements.get("fig-angle").rotationIcon(angle, size)` returns a standalone SVG string (`size` defaults to 48).
+
+### `fig-input-combo`
+
+```tsx
+<fig-input-combo>
+  <fig-input-text value={value} onInput={onInput} />
+  <fig-button>Go</fig-button>
+</fig-input-combo>
+```
+
+- Children stay in light DOM.
+
+### `fig-audio`
+
+```tsx
+<fig-audio src="track.mp3" controls loop />
+```
+
+- Attrs: `src`, `variant="bars|ribbon"`, `autoplay`, `controls`, `muted`, `loop`
+- Composes a synchronized `fig-audio-waveform` and `fig-media-controls`.
+- `variant` is forwarded to the generated or authored waveform and defaults to `bars`.
+- Authored direct waveform and controls children are preserved.
+- Methods: `play()`, `pause()`, `toggle()`; `audioEl` exposes the native audio element.
+
+### `fig-audio-waveform`
+
+```tsx
+<fig-audio-waveform url="https://example.com/audio.wav" progress="0.42" />
+```
+
+- Responsive waveform generated from the `url` attribute.
+- `variant="bars|ribbon"` selects rounded bars or a smooth mirrored ribbon; defaults to `bars`.
+- `progress` is a clamped `0`–`1` fraction; the completed waveform uses the selected icon color.
+- `polarization` controls waveform contrast around half-height; default `1.5`, `1` is neutral.
+- `full` fills the available width.
+- URL decoding requires CORS access.
+- No upload, playback, label, or button UI.
+
+### `fig-input-file`
+
+```tsx
+<fig-input-file
+  accepts="image/*"
+  preview
+  multiple
+  onChange={onChange}
+/>
+```
+
+- Attrs: `preview`, `label`, `accepts`, `multiple`, `remove`, `disabled`, `variant` (forwards `fig-button` variants; defaults to `property`)
+- `remove` defaults to true; set `remove="false"` to omit the selected file's remove button.
+- Blank or omitted `label` defaults to `Upload audio`, `Upload image`, or `Upload file` based on the known file type. An explicit label overrides it.
+- For known audio files, `preview` shows the audio icon and filename at rest, reveals play and waveform controls on hover/focus, and keeps pause plus waveform visible while playing.
+- `accepts` controls the native chooser filter; file icons and previews are detected independently.
+- Methods: `focus(options)`, `activate(options)` (native chooser or current preview action; disabled-safe)
+- Events: `change` / `input` with files on the host
+
+### `fig-checkbox`
+
+```tsx
+<fig-checkbox
+  label="Enabled"
+  checked={on ? "true" : undefined}
+  onInput={onInput}
+/>
+```
+
+- Attrs: `label`, `checked`, `disabled`, `value`
+- Events: `input` / `change` → `detail.checked` ?? `host.checked`
+
+### `fig-radio`
+
+```tsx
+<fig-radio
+  name="align"
+  value="left"
+  label="Left"
+  checked={value === "left" ? "true" : undefined}
+  onInput={onInput}
+/>
+```
+
+- Attrs: `name`, `value`, `label`, `checked`, `disabled`
+
+### `fig-switch`
+
+```tsx
+<fig-switch
+  checked={on ? "true" : undefined}
+  onInput={onInput}
+/>
+```
+
+- Attrs: `checked`, `disabled`, `label`, `indeterminate`
+- Events: `input` / `change` → `detail.checked` ?? `host.checked`
+- Methods: `focus(options)`, `activate()` (native toggle; disabled-safe)
+
+### `fig-slider`
+
+```tsx
+<fig-slider
+  value={String(opacity)}
+  min="0"
+  max="100"
+  step="1"
+  text="true"
+  units="%"
+  full
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `type` (`range`, `opacity`, `hue`, `stepper`, `delta`), `min`, `max`, `step`, `text`, `units`, `transform`, `color`, `default`, `variant` (`classic`), `placeholder`, `full`, `disabled`
+- A valid explicit `default` adds a tick and native snap target for range, opacity, and hue sliders. Inferred defaults do not render a tick.
+- Events: `input` / `change` → `currentTarget.value`
+- React: keep `value` a string; do not remount during drag. Opacity: set `color`. Delta: set `default`. Stepper: include a `<datalist>` of stops.
+
+### `fig-options`
+
+```tsx
+<fig-options
+  options="Light,Dark"
+  value={isDark ? "Dark" : "Light"}
+  full
+  onChange={onChange}
+/>
+```
+
+- Attrs: `options` (comma / newline / JSON), `value`, `full`, `disabled`
+- Events: `input` / `change` → `detail` ?? `target.value`
+
+## Color and fill
+
+### `fig-input-color`
+
+```tsx
+<fig-input-color
+  value={color}
+  text="true"
+  alpha="true"
+  full
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `value`, `text`, `alpha`, `full`, `disabled`. Forwards `picker-*` when `fig-fill-picker` is registered. Do not use `picker` / `picker-anchor`.
+- Events: `input` / `change` → `detail.{ color, alpha, opacity }` plus legacy `value` / `hex` / `rgba`
+
+### `fig-input-fill`
+
+```tsx
+<fig-input-fill
+  value={fillJson}
+  full
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `value` (JSON or string), `mode`, `webcam-mode`, `default-video`, `picker-*`, `disabled`, `full`
+- Events: `input` / `change` with fill payload in `detail`
+- Custom modes: include the name in `mode`; slot `slot="mode-<name>"`. Closed chrome matches image fills. In React, listen for `modeready` and mount into `e.detail.container` (see `fig-editor`).
+
+### `fig-input-palette`
+
+```tsx
+<fig-input-palette
+  value='["#0D99FF","#14AE5C"]'
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `value`, `edit` (`true` | `false` | `picker`), `fixed`, `open`, `disabled`, `min`, `max`
+- `edit="true"` keeps the inline expandable editor, `edit="false"` renders a compact preview, and `edit="picker"` opens `fig-palette-editor` from the editor bundle.
+- Methods: `focus(options)`, `activate(options)` (expands inline mode or opens picker mode; disabled-safe)
+
+### `fig-palette-editor`
+
+```tsx
+<fig-palette-editor
+  value='["#0D99FF","#14AE5C"]'
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Editor-bundle component for reusable palette editing with drag and keyboard reordering.
+- Attrs: `value`, `fixed`, `disabled`, `min`, `max`
+- `max` is unbounded when omitted.
+- Events: `input` / `change` with the normalized ordered color array in `detail`
+
+### `fig-input-gradient`
+
+```tsx
+<fig-input-gradient
+  value={gradientJson}
+  mode="tip"
+  onInput={onInput}
+  onChange={onChange}
+/>
+```
+
+- Attrs: `value`, `edit`, `mode` (`handle` | `tip`), `disabled`
+- `edit="picker"` opens `dialog[is="fig-popup-gradient"]` when `fig-editor.js` is loaded.
+- Methods: `focus(options)`, `activate(options)` (opens picker mode like a click)
+
+### `fig-swatch`
+
+```tsx
+<fig-swatch background="#14AE5C" size="small" selected={selected || undefined} />
+```
+
+- Attrs: `background`, `size` (`small` | `medium` | `large`), `selected`, `disabled`, `alpha`
+
+### `fig-chit`
+
+```tsx
+<fig-chit background="#14AE5C" />
+```
+
+- Alias-style color chip. Same idea as `fig-swatch`.
+
+### `fig-color-tip`
+
+```tsx
+<fig-color-tip value="#0D99FF" control="color" />
+```
+
+- Attrs: `value`, `control` (`color` | `add` | `remove`)
+
+## Layout and chrome
+
+### `fig-field`
+
+```tsx
+<fig-field direction="horizontal">
+  <label>Opacity</label>
+  <fig-slider value="75" min="0" max="100" text="true" units="%" full />
+</fig-field>
+```
+
+- Attrs: `direction` (`horizontal` | `vertical`), `label`, `columns`
+- Slots: `leading` for an accessory before the label; `trailing` for an end action.
+- Put control attrs on the control, not the field.
+
+### `fig-stack`
+
+```tsx
+<fig-stack direction="vertical" gap="3">
+  <fig-stack justify="between" full>{children}</fig-stack>
+  <fig-stack direction="grid" columns="3">{children}</fig-stack>
+</fig-stack>
+```
+
+- Attrs: `direction` (`horizontal` default | `vertical` | `grid`), `gap` (spacer token or CSS length), `align`, `justify` (`start` | `center` | `end` | `between` | `around` | `stretch`), `wrap`, `full`, `columns` (grid), `min-width` (grid auto-fill)
+- Use instead of the deprecated `hstack` / `vstack` tags.
+
+### `fig-group`
+
+```tsx
+<fig-group name="Appearance" collapsible open compact chevron="end">
+  {children}
+</fig-group>
+```
+
+- Attrs: `name`, `collapsible`, `open`, `compact`, `chevron` (`start` default, 16px | `end`, 24px), `toggle-target` (CSS selector)
+- Group `compact` is propagated to the direct `fig-header`.
+- In a collapsible group, the `h3` is the keyboard-accessible toggle and the chevron is clickable. For custom headers, place independent actions beside the `h3`, not inside it.
+- `toggle-target` replaces both default toggle targets with every selector match in the direct header. All matches receive synchronized `aria-expanded`; invalid or unmatched selectors fall back to the defaults.
+
+### `fig-header`
+
+```tsx
+<fig-header borderless compact>
+  <h3>Title</h3>
+</fig-header>
+```
+
+- Attrs: `borderless`, `compact`
+
+### `fig-footer`
+
+```tsx
+<fig-footer sticky>
+  <fig-button>Save</fig-button>
+</fig-footer>
+```
+
+- Attrs: `borderless`, `sticky`
+
+### `fig-content`
+
+```tsx
+<fig-content>Body</fig-content>
+```
+
+### `fig-toolbelt` / `fig-toolbelt-group` / `fig-toolbelt-item`
+
+```tsx
+<fig-toolbelt
+  layout="horizontal"
+  overflow="buttons"
+  value={tool}
+  aria-label="Design tools"
+  onChange={onChange}
+>
+  <fig-toolbelt-item slot="prepend" value="select">
+    Select
+  </fig-toolbelt-item>
+  <fig-toolbelt-group aria-label="Transform tools">
+    <fig-button value="move" selected={tool === "move" || undefined}>
+      Move
+    </fig-button>
+    <fig-button-combo>
+      <fig-button value="frame">Frame</fig-button>
+      <fig-button value="frame-menu" aria-label="Frame menu">
+        <fig-icon name="chevron" size="small" />
+      </fig-button>
+    </fig-button-combo>
+  </fig-toolbelt-group>
+  <fig-toolbelt-item slot="append" value="settings">
+    Settings
+  </fig-toolbelt-item>
+</fig-toolbelt>
+```
+
+- Toolbelt attrs: `value`, `disabled`, `layout="horizontal|vertical"`, `overflow="buttons|scrollbar"`
+- Group: wraps related items; adjacent groups receive direction-aware separators
+- `fig-toolbelt-item` is optional; use it to make custom content one selectable item
+- Valued `fig-button` descendants are individually selectable, including buttons inside groups, tooltips, and `fig-button-combo`
+- Buttons inside a `fig-toolbelt-item` belong to that wrapper and are not counted separately
+- A button inside `fig-menu` is that menu's trigger and is not counted as a tool
+- Item and direct-button attrs: `value`, `selected`, `disabled`
+- ArrowLeft/ArrowRight move focus horizontally; ArrowUp/ArrowDown move focus vertically; Enter/Space selects
+- Items stay in light DOM; the internal `part="viewport"` owns scrolling and overflow fades
+- `slot="prepend"` and `slot="append"` keep authored content fixed outside the viewport; slotted items remain selectable and keyboard-navigable
+- Overflow buttons are generated outside the viewport for `overflow="buttons"`
+- Events: `input` / `change` → `currentTarget.value`
+
+### `fig-tabs` / `fig-tab` / `fig-tab-content`
+
+```tsx
+<fig-tabs value={tab} onChange={onChange}>
+  <fig-tab value="general" selected={tab === "general" || undefined}>
+    General
+  </fig-tab>
+  <fig-tab value="export" content="#export">
+    Export
+  </fig-tab>
+</fig-tabs>
+<fig-tab-content id="export">…</fig-tab-content>
+```
+
+- Tabs: roving tabindex, `aria-controls` via `content="#id"`
+- Children stay in light DOM (overflow chrome must not steal them)
+- Events: `input` / `change` → `currentTarget.value`
+
+### `fig-segmented-control` / `fig-segment`
+
+```tsx
+<fig-segmented-control value={align} onChange={onChange}>
+  <fig-segment value="left">Left</fig-segment>
+  <fig-segment value="center">Center</fig-segment>
+</fig-segmented-control>
+```
+
+- Radio-group pattern. Segments stay light-DOM children.
+- Events: `input` / `change` → `currentTarget.value`
+
+### `fig-chooser` / `fig-choice`
+
+```tsx
+<fig-chooser value={value} layout="vertical" onChange={onChange}>
+  <fig-choice value="a" selected={value === "a" || undefined}>
+    A
+  </fig-choice>
+  <fig-choice value="b">B</fig-choice>
+</fig-chooser>
+```
+
+- Attrs (chooser): `value`, `layout` (`vertical` | `horizontal` | `grid`), `columns`, `drag`, `loop`, `auto-scroll`, `scroll-behavior`
+- Choice: always set `value`. Omit chooser `value` to select first; `value=""` means none.
+- A selected choice reflects `selected` to its direct element children.
+- Children stay in light DOM.
+
+### `fig-separator` / `fig-menu-separator`
+
+```tsx
+<fig-separator label="Darken" sticky />
+```
+
+- Attrs: `label`, `sticky`.
+- `label` generates a child `<label>`; an authored child `<label>` is preserved instead.
+
+### `fig-menu` / `fig-menu-item`
+
+```tsx
+<fig-menu position="bottom left" offset="8 8" onChange={onChange}>
+  <fig-button slot="trigger">Menu</fig-button>
+  <fig-menu-item value="copy">Copy</fig-menu-item>
+  <fig-separator />
+  <fig-menu-item value="paste" disabled>
+    Paste
+  </fig-menu-item>
+</fig-menu>
+```
+
+- Attrs (menu): `position`, `offset`, `closedby` (`auto` | `any` | `none`), `open`, `disabled`, `trigger="contextmenu"`
+- Item: `value`, `disabled`, `subtle`. Also valid as a row in `fig-popup`.
+- Trigger: `slot="trigger"` (also assigned automatically). Items stay in light DOM and slot into the popup — do not relocate.
+- Internal popup uses `popover="manual"` (top layer) so lists work inside `fig-popup variant="popover"`.
+- Events: `change` → `detail.{ value }`
+
+### `fig-icon`
+
+```tsx
+<fig-icon name="search" size="small" color="secondary" />
+```
+
+- Attrs: `name`, `size` (`medium` | `small`), `color` (token)
+- `fig.css` includes all generated icon tokens. Use `@rogieking/figui3/icons.css` only when consuming the `--icon-*` variables without the full component stylesheet.
+- Add icons through `icons/<size>/<name>.svg` and `icons/manifest.js`; `npm run build:icons` generates `icons.css`.
+
+### `fig-avatar`
+
+```tsx
+<fig-avatar name="Rogie King" src={src} size="large" />
+```
+
+- Attrs: `src`, `name`, `size` (`""` | `large`)
+
+### `fig-truncate`
+
+```tsx
+<fig-truncate position="middle" overflow="fade" tooltip tail="…">
+  A very long layer name
+</fig-truncate>
+```
+
+- Attrs: `position` (`right` | `left` | `middle`), `overflow` (`ellipsis` | `fade`), `tooltip`, `tail`
+
+### `.fig-overflow-fade`
+
+```tsx
+<div className="fig-overflow-fade" style={{ maxHeight: "12rem" }}>
+  {content}
+</div>
+```
+
+- Apply the class directly to a height-constrained vertical scroll container.
+- Add `fig-overflow-fade-horizontal` for a horizontal scroll container.
+- CSS custom property: `--fig-overflow-fade-size` (default: `var(--spacer-5)`).
+- CSS custom property: `--fig-overflow-fade-clear-top` (default: `0px`) keeps a sticky header fully visible.
+- CSS custom property: `--fig-overflow-fade-clear-left` (default: `0px`) reserves a visible area at the start of a horizontal scroller.
+- The direction-aware mask is enabled only when self scroll timelines are supported; other browsers retain normal scrolling without fades.
+
+## Overlays
+
+### `dialog is="fig-dialog"`
+
+```tsx
+<dialog is="fig-dialog" drag handle="fig-header" modal>
+  <fig-header>
+    Title
+    <fig-button variant="ghost" icon close-dialog aria-label="Close">
+      <fig-icon name="close" />
+    </fig-button>
+  </fig-header>
+  <fig-content>Body</fig-content>
+</dialog>
+```
+
+- Attrs: `modal`, `drag`, `resizable`, `autoresize`, `handle`, `closedby` (`any` | `closerequest` | `none`), `position` (viewport: `top left` … `bottom right`). No `anchor`.
+- Events: native `close` / `cancel` — listen on the dialog ref.
+
+### `dialog is="fig-popup"`
+
+```tsx
+<dialog
+  ref={popupRef}
+  is="fig-popup"
+  variant="popover"
+  position="bottom left"
+  offset="8 8"
+  className="menu"
+  open={open ? true : undefined}
+>
+  <fig-content>…</fig-content>
+</dialog>
+```
+
+- Attrs: `anchor` (selector or element on the ref), `position`, `offset`, `viewport-margin`, `variant` (`popover` | `tooltip`), `theme` (`default` | `light` | `dark` | `menu`), `title` (auto header)
+- `variant="popover"` uses CSS `filter` (containing block for `position: fixed`). Nested `fig-menu` / `fig-select` keep `popover="manual"`.
+- Set `anchor` as an element after mount. Listen for `close`.
+
+### `dialog is="fig-toast"`
+
+```tsx
+<dialog ref={toastRef} is="fig-toast" theme="success" duration="3000" dismiss>
+  Saved
+</dialog>
+```
+
+```tsx
+toastRef.current?.showToast();
+```
+
+- Attrs: `theme`, `duration`, `offset`, `dismiss`, `live` (`polite` | `assertive`), `icon`
+
+### `fig-tooltip`
+
+```tsx
+<fig-tooltip ref={tipRef} text="Copy command">
+  <fig-button variant="ghost" icon onClick={onCopy} aria-label="Copy">
+    <fig-icon name="copy" />
+  </fig-button>
+</fig-tooltip>
+```
+
+- Attrs: `text`, `action` (`hover` | `click` | `manual`), `delay`, `theme`, `pointer`, `show`
+- Imperative: `tooltip.text = "Copied"; tooltip.showPopup(); tooltip.hidePopup();`
+
+## Media
+
+### `fig-preview`
+
+```tsx
+<fig-preview aspect-ratio="16/9" fit="cover" checkerboard>
+  <img src={src} alt="" />
+</fig-preview>
+```
+
+- Attrs: `aspect-ratio`, `fit`, `full`, `checkerboard`
+- Overlay: `slot="overlay"` — stays light DOM.
+
+### `fig-media`
+
+```tsx
+<fig-media
+  type="image"
+  src={src}
+  fit="cover"
+  checkerboard="true"
+  upload
+  onChange={onChange}
+/>
+```
+
+- Attrs: `type`, `src`, read-only `loaded` (image mode), read-only `animated` (decoded GIF), `caption`, `aspect-ratio`, `fit`, `upload`, `multiple`, `loading-indicator`, `checkerboard`, `controls`, `autoplay`, `loop`, `muted`, `poster`
+- Use `upload="icon"` for an Add icon while empty and only Remove when populated; `label` supplies the Add tooltip and accessible name.
+- With `upload multiple`, the generated file input accepts multiple files and displays the first selection.
+- Events: `loaded` (`detail.src`, first `detail.file`, and all `detail.files`), `input` / `change`
+
+### `fig-image`
+
+```tsx
+<fig-image src={src} fit="cover" upload checkerboard="true" onChange={onChange} />
+```
+
+- Attrs: same media surface attrs. The read-only `loaded` attribute supports CSS loaded-state selectors.
+- Animated GIFs use video-like `controls`, `autoplay`, `loop`, duration, seeking, and playback methods when WebCodecs `ImageDecoder` is available.
+- Events: `load`, `error`, and `loaded` (same upload detail as `fig-media`)
+
+### `fig-video`
+
+```tsx
+<fig-video poster={poster} muted fit="cover" controls="true" />
+```
+
+- Controls render **below** the preview, not as an overlay.
+
+### `fig-carousel`
+
+```tsx
+<fig-carousel duration="4" loop>
+  <fig-image src={cover} aspect-ratio="16/9" full />
+  <fig-video src={video} muted aspect-ratio="16/9" full />
+  <fig-image src={detail} carousel-duration="8" aspect-ratio="16/9" full />
+</fig-carousel>
+```
+
+- Direct children: `fig-media`, `fig-image`, `fig-video`
+- Attrs: `index`, `playing`, `autoplay` (defaults true), `duration` (seconds; default `5`), `loop`, `navigation="buttons|dots"`, `progress`
+- Child `carousel-duration` overrides the host duration or intrinsic video/animated GIF duration.
+- Generated bottom controls: previous, next, then `fig-button-play`.
+- Page navigation replaces the controls with centered `.fig-carousel-pages`; each `progress.fig-carousel-page` persists, and the active page stretches to show progress unless `progress="false"`.
+- Methods: `previous()`, `next()`, `goTo(index)`, `first()`, `last()`, `restart()`, `play()`, `pause()`, `toggle()`
+- Read-only: `items`, `currentItem`, `canGoPrevious`, `canGoNext`
+- Event: `change` with `detail.index`, `detail.previousIndex`, and `detail.item`
+
+### `fig-card`
+
+```tsx
+<fig-card
+  src={src}
+  label="Card"
+  aspect-ratio="1/1"
+  selected={selected || undefined}
+  onClick={onClick}
+/>
+```
+
+- Attrs: `src`, `label`, `sublabel`, `selected`, `disabled`, `full`, `size`, `direction`, `aspect-ratio`, `fit`, `label-line-clamp`, `label-overflow`
+- `direction="horizontal"` uses a 40px media preview on the left (`56px` with `size="large"`) and stacks label/sublabel content on the right.
+- `label-overflow="fade"` adds `fig-overflow-fade fig-overflow-fade-horizontal` to both labels; the default is `ellipsis`.
+- Thumbnail vars: `--fig-card-thumbnail-width` (`2.5rem`, or `3.5rem` when large), `--fig-card-thumbnail-height` (`auto`).
+
+### `fig-media-controls`
+
+```tsx
+<fig-media-controls
+  duration="120"
+  time={String(time)}
+  playing={playing || undefined}
+  onInput={onInput}
+/>
+```
+
+- Attrs: `playing`, `overlay`, `disabled`, `duration`, `time`
+
+## Specialized
+
+### `fig-easing-curve`
+
+```tsx
+<fig-easing-curve value="ease-in-out" onInput={onInput} onChange={onChange} />
+```
+
+Set `mode="bezier"` or `mode="spring"` to constrain the editor and preset list
+to one curve type.
+
+With `edit="false"`, the compact preset control opens `fig-popup-easing` when
+`fig-editor.js` is loaded; without the editor bundle it retains the preset
+dropdown fallback.
+
+- Methods: `focus(options)`, `activate(options)` (opens the compact popup or activates the preset control)
+
+### `fig-3d-rotate`
+
+```tsx
+<fig-3d-rotate value='{"x":0,"y":0}' onInput={onInput} onChange={onChange} />
+```
+
+- JSON `value`. Pass as a string attr.
+
+### `fig-origin-grid`
+
+```tsx
+<fig-origin-grid value="50% 50%" fields="true" onInput={onInput} />
+```
+
+### `fig-joystick`
+
+```tsx
+<fig-joystick value="50% 50%" axis-labels="X Y" onInput={onInput} />
+```
+
+### `fig-handle`
+
+```tsx
+<div style={{ position: "relative", width: 120, height: 80 }}>
+  <fig-handle value="50% 50%" drag type="default" />
+</div>
+```
+
+- Attrs: `type` (`default` | `minimal` | `color` | `canvas`), `tip`, `size`, `color`, `selected`, `disabled`, `drag`, `drag-axes`, `drag-snapping`, `precision` (percentage/pixel decimal places; default `2`, use `0` for whole numbers)
+
+### `fig-spinner`
+
+```tsx
+<fig-spinner size="small" />
+```
+
+### `fig-shimmer`
+
+```tsx
+<fig-shimmer>
+  <span>Thinking…</span>
+</fig-shimmer>
+```
+
+- Attrs: `duration`, `direction`, `playing`
+
+### `fig-skeleton`
+
+```tsx
+<fig-skeleton>
+  <fig-field>
+    <label>Name</label>
+    <fig-input-text value="Loading" />
+  </fig-field>
+</fig-skeleton>
+```
+
+- Attrs: `duration`, `direction`, `playing`
+
+## `fig-layer` (core registration, standalone styles)
+
+Registered by `fig.js`. Import `fig-layer.css` for layer-list styling.
+`fig-layer.js` remains available as a standalone registration entry.
+
+```tsx
+<fig-layer data-section="button" open>
+  <div className="fig-layer-row">
+    <label>Button</label>
+  </div>
+  <fig-layer data-section="button" data-example="primary">
+    <div className="fig-layer-row">
+      <label>Primary</label>
+    </div>
+  </fig-layer>
+</fig-layer>
+```
+
+- Attrs: `open`, `visible`, `disabled`, `selected`
+- Events: `openchange`, `visibilitychange`. Nested layers are React children; sync `selected` / `open` via attrs or `setAttribute` after render.
+- Clicks on `.fig-layer-chevron` toggle; row clicks are yours (delegate on a parent).

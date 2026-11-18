@@ -1,16 +1,19 @@
 {
-    "name": "crack-font",
-    "version": "1.0.0",
-    "description": "Non-destructive editable letter rotation for Figma",
-    "main": "code.js",
-    "scripts": {
-        "build": "tsc -p tsconfig.json",
-        "test": "tsc -p tsconfig.json && node --test tests/*.test.cjs"
-    },
-    "author": "",
-    "license": "",
-    "devDependencies": {
-        "@figma/plugin-typings": "1.117.0",
-        "typescript": "5.9.3"
-    }
+  "name": "crack-font",
+  "version": "3.0.0",
+  "private": true,
+  "description": "Figma plugin: split text into letters and rotate them live",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",
+    "test": "node scripts/build.mjs && vitest run"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.142.0",
+    "@rogieking/figui3": "^12.0.3",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
 }

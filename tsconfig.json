@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
-    "target": "es6",
-    "lib": ["es6"],
+    "target": "es2017",
+    "lib": ["es2020", "es2022.intl"],
     "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
     "types": ["@figma/plugin-typings"]
   },
-  "files": ["code.ts"]
+  "include": ["src/*.ts"]
 }
